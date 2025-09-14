@@ -1,4 +1,4 @@
-# fish
+# 🐟 fish
 
 aldo's fish config
 
