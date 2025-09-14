@@ -9,38 +9,38 @@ alias gd="git diff --cached"
 alias gp="git push"
 
 # Screen aliases
-alias ss="screen -S"
-alias sr="screen -r"
 alias sl="screen -ls | awk '/\t/ {print \$1}' | sed 's/^[0-9]*\.//'"
+alias sr="screen -r"
+alias ss="screen -S"
 
 # Config editing aliases
-alias zz="nvim ~/.config/fish/config.fish && source ~/.config/fish/config.fish"
 alias zr="source ~/.config/fish/config.fish"
+alias zz="nvim ~/.config/fish/config.fish && source ~/.config/fish/config.fish"
 
 # GitHub Copilot aliases
-alias suggest="gh copilot suggest"
-alias ss="gh copilot suggest"
-alias explain="gh copilot explain"
 alias ee="gh copilot explain"
+alias explain="gh copilot explain"
+alias ss="gh copilot suggest"
+alias suggest="gh copilot suggest"
 
 # Power management
 alias coffee="sudo pmset -b disablesleep 1"
 alias tea="sudo pmset -b disablesleep 0"
 
 # Utility aliases
-alias thb="bun ~/dev/thb/index.ts"
-alias cat="bat -pp"
-alias p3="python3"
-alias stack="stacks-cli"
-alias rain="onsen | ~/dot/rain/rain"
-alias zed="open -a /Applications/Nix\ Apps/Zed.app -n"
-alias dl3="yt-dlp -x --audio-format mp3 --audio-quality 0 --output '%(channel)s - %(title)s.%(ext)s'"
 alias aii="cd ~/.config/aichat"
-alias pb="pbcopy"
-alias vv="vercel-case"
-alias vcase="vercel-case"
-alias pjson="prettier *.json --write"
+alias cat="bat -pp"
 alias comm="vercel_community"
+alias dl3="yt-dlp -x --audio-format mp3 --audio-quality 0 --output '%(channel)s - %(title)s.%(ext)s'"
+alias p3="python3"
+alias pb="pbcopy"
+alias pjson="prettier *.json --write"
+alias rain="onsen | ~/dot/rain/rain"
+alias stack="stacks-cli"
+alias thb="bun ~/dev/thb/index.ts"
+alias vcase="vercel-case"
+alias vv="vercel-case"
+alias zed="open -a /Applications/Nix\ Apps/Zed.app -n"
 
 # ------------------------------
 # ENVIRONMENT VARIABLES
