@@ -4,7 +4,6 @@
 
 # Git aliases
 alias gs="git-status-pretty"
-# alias gs="git status"
 alias gd="git diff --cached"
 alias gp="git push"
 
