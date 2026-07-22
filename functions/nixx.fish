@@ -97,12 +97,28 @@ function nixx
         printf '\033[?25h'
     end
 
-    # --- helper: run a step ---
-    # Usage: __nixx_step <label> <command string...>
+    # --- helper: run a step with timeout and log capture ---
+    # Usage: __nixx_step <label> [--timeout <seconds>] <command string...>
+    # Default timeout: 300s. Output is captured; log shown on failure, deleted on success.
     function __nixx_step
         set -l label $argv[1]
-        set -l cmd (string join " " $argv[2..-1])
+        set -l timeout_secs 300
+        set -l cmd_parts
 
+        # parse optional --timeout N after label
+        set -l i 2
+        while test $i -le (count $argv)
+            if test "$argv[$i]" = --timeout
+                set i (math $i + 1)
+                set timeout_secs $argv[$i]
+            else
+                set -a cmd_parts $argv[$i]
+            end
+            set i (math $i + 1)
+        end
+        set -l cmd (string join " " $cmd_parts)
+
+        set -l logfile /tmp/nixx-(string replace -ra '[^a-zA-Z0-9]' '-' $label)-(date +%s).log
         set -l t_start (date +%s)
         set -l status_code 0
 
@@ -113,12 +129,55 @@ function nixx
             eval $cmd
             set status_code $status
         else
+            # Run command in background, capturing output to logfile.
+            # A watchdog kills the whole process tree if timeout is exceeded and
+            # always writes the exitfile so the spinner loop below can never hang.
+            set -l exitfile {$logfile}.exit
+            set -l timedoutfile {$logfile}.timedout
+            fish -c "
+                fish -c '$cmd' >$logfile 2>&1
+                echo \$status >$exitfile
+            " &
+            set -l job_pid $last_pid
+
+            # Watchdog: after timeout_secs, kill the job's entire descendant tree
+            # (job control is often off under `fish -c`, so a process-group kill is
+            # unreliable — we walk the tree via pgrep instead). Crucially it also
+            # marks the timeout and writes the exitfile so the spinner unblocks.
+            fish -c "
+                sleep $timeout_secs
+                if test -f $exitfile
+                    exit 0
+                end
+                touch $timedoutfile
+                __nixx_kill_tree $job_pid TERM
+                sleep 2
+                __nixx_kill_tree $job_pid KILL
+                # ensure spinner unblocks even if the killed child never wrote it
+                test -f $exitfile; or echo 124 >$exitfile
+            " &
+            set -l watchdog_pid $last_pid
+
             gum spin --spinner dot \
                 --spinner.foreground $p_purple \
                 --title.foreground $p_muted \
                 --title "  $label" \
-                -- fish -c "$cmd" >/dev/null 2>&1
-            set status_code $status
+                -- fish -c "while not test -f $exitfile; sleep 0.2; end"
+
+            # kill watchdog if still running (job finished on its own)
+            __nixx_kill_tree $watchdog_pid KILL 2>/dev/null
+            kill $watchdog_pid 2>/dev/null
+
+            wait $job_pid 2>/dev/null
+            if test -f $timedoutfile
+                set status_code 124
+                echo "[nixx] killed after {$timeout_secs}s timeout" >> $logfile
+            else if test -f $exitfile
+                set status_code (string trim (cat $exitfile))
+            else
+                set status_code 1
+            end
+            rm -f $exitfile $timedoutfile
         end
 
         set -l t_end (date +%s)
@@ -137,20 +196,26 @@ function nixx
                     (gum style --foreground $p_fg " $label") \
                     (gum style --foreground $p_muted " ($elapsed_str)")
             end
-            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str"
+            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str|"
+            rm -f $logfile
         else
+            set -l reason
+            if test $status_code -eq 124
+                set reason " (timed out after {$timeout_secs}s)"
+            end
             if test "$__nixx_verbose" -eq 1
                 echo
                 gum join --horizontal \
                     (gum style --foreground $p_red --bold "  ✗ Failed") \
-                    (gum style --foreground $p_muted " ($elapsed_str)")
+                    (gum style --foreground $p_muted " ($elapsed_str$reason)")
             else
                 gum join --horizontal \
                     (gum style --foreground $p_red "  ✗") \
                     (gum style --foreground $p_fg " $label") \
-                    (gum style --foreground $p_muted " ($elapsed_str)")
+                    (gum style --foreground $p_muted " ($elapsed_str$reason)")
+                gum style --foreground $p_muted "     log: $logfile"
             end
-            set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str"
+            set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|$logfile"
         end
     end
 
@@ -167,7 +232,7 @@ function nixx
             brew upgrade
             set status_code $status
         else
-            set -l tmplog (mktemp /tmp/nixx-brew-XXXXXX)
+            set -l tmplog /tmp/nixx-brew-upgrade-(date +%s).log
             set -l exitfile {$tmplog}.exit
 
             # run brew upgrade in background; write exit code to exitfile when done
@@ -189,7 +254,11 @@ function nixx
                 set -g __nixx_brew_upgraded_count 0
             end
 
-            rm -f $tmplog $exitfile
+            rm -f $exitfile
+            if test "$status_code" = "0"
+                rm -f $tmplog
+            end
+            # keep $tmplog on failure so it can be shown below
         end
 
         set -l t_end (date +%s)
@@ -201,13 +270,18 @@ function nixx
                 (gum style --foreground $p_green "  ✓") \
                 (gum style --foreground $p_fg " $label") \
                 (gum style --foreground $p_muted " ($elapsed_str)")
-            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str"
+            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str|"
         else
             gum join --horizontal \
                 (gum style --foreground $p_red "  ✗") \
                 (gum style --foreground $p_fg " $label") \
                 (gum style --foreground $p_muted " ($elapsed_str)")
-            set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str"
+            if test -n "$tmplog" -a -f "$tmplog"
+                gum style --foreground $p_muted "     log: $tmplog"
+                set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|$tmplog"
+            else
+                set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|"
+            end
         end
     end
 
@@ -313,20 +387,20 @@ function nixx
             # --- neovim ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Neovim"
-            __nixx_step "Updating neovim plugins" \
-                "nvim --headless '+Lazy! sync' +qa"
+            __nixx_step "Updating neovim plugins" --timeout 180 \
+                "nvim --headless '+Lazy! sync' '+qa!'"
 
             # --- agent skills ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Agent Skills"
-            __nixx_step "Updating agent skills" \
-                "npx skills update -g -y"
+            __nixx_step "Updating agent skills" --timeout 90 \
+                "pnpx skills update -g -y"
 
             # --- claude ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Claude"
-            __nixx_step "Installing/updating Claude" \
-                "curl -fsSL https://claude.ai/install.sh | bash"
+            __nixx_step "Installing/updating Claude" --timeout 60 \
+                "curl -fsSL https://claude.ai/install.sh | sh"
 
             # --- node ---
             echo
@@ -335,19 +409,19 @@ function nixx
                 "fnm install --lts && fnm default lts-latest"
             __nixx_step "Updating pnpm (corepack)" \
                 "corepack prepare pnpm@latest --activate"
-            __nixx_step "Updating pnpm globals" \
+            __nixx_step "Updating pnpm globals" --timeout 120 \
                 "pnpm update -g"
 
             # --- python tools ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Python Tools"
-            __nixx_step "Updating uv tools" \
+            __nixx_step "Updating uv tools" --timeout 120 \
                 "uv tool upgrade --all"
 
             # --- brew ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Homebrew"
-            __nixx_step "Updating Homebrew" \
+            __nixx_step "Updating Homebrew" --timeout 60 \
                 "brew update"
             __nixx_brew_upgrade
             __nixx_step "Cleaning up Homebrew" \
@@ -363,12 +437,16 @@ function nixx
 
     set -l fail_count 0
     set -l pass_count 0
+    set -l failed_logs
     for r in $__nixx_results
         set -l parts (string split "|" $r)
         if test "$parts[2]" = ok
             set pass_count (math $pass_count + 1)
         else
             set fail_count (math $fail_count + 1)
+            if test -n "$parts[4]" -a -f "$parts[4]"
+                set -a failed_logs "$parts[1]: $parts[4]"
+            end
         end
     end
 
@@ -380,7 +458,7 @@ function nixx
         set -a detail_parts "$__nixx_brew_upgraded_count packages upgraded"
     end
     if test $fail_count -gt 0
-        set -a detail_parts "$fail_count step failed"
+        set -a detail_parts "$fail_count step(s) failed"
     end
     set -l detail_str (string join " · " $detail_parts)
 
@@ -408,6 +486,12 @@ function nixx
                 "▲  $fail_count of $total_count steps failed · $total_elapsed_str"
         end
     end
+    # list logs for failed steps
+    if test (count $failed_logs) -gt 0
+        for entry in $failed_logs
+            gum style --foreground $p_muted "  log: $entry"
+        end
+    end
     echo
 
     # --- cleanup ---
@@ -423,6 +507,12 @@ function nixx
     switch "$mode"
         case '' '*'
             nixx-drift
+
+            # --- restore custom LaunchAgents (full update only) ---
+            # Ensures any *.plist in ~/.config/scripts/*/ is loaded.
+            if type -q scripts-restore
+                scripts-restore
+            end
 
             # --- publish public dotfiles (full update only) ---
             # Syncs the public-safe subset of ~/.config to its GitHub repos.

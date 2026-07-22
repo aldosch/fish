@@ -13,12 +13,89 @@
 function nixx-drift
     _aldo_dracula_apply_palette
 
-    set -l config_dir ~/.config
-    set -l nix_dir $config_dir/nix
+    # NB: these must be GLOBAL, not `set -l`. The __drift_* helpers below are
+    # defined as nested functions, and fish functions do NOT inherit the
+    # enclosing function's local variables — a `set -l` here would read as empty
+    # inside __drift_brew/__drift_pnpm/__drift_uv (producing `cd &&` → wrong dir,
+    # and empty canonical lists → false "extra" drift). Cleaned up at the end.
+    set -g __drift_config_dir ~/.config
+    set -g __drift_nix_dir $__drift_config_dir/nix
+
+    # Interactive TTY guard. gum's choose/confirm need a real terminal; when nixx
+    # runs non-interactively (backgrounded, piped, in CI) those calls fail with
+    # "could not open a new TTY". In that case we run in report-only mode: drift
+    # is listed but no interactive remediation is attempted.
+    set -g __drift_interactive 1
+    if not test -t 0; or not test -t 1
+        set -g __drift_interactive 0
+    end
 
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
+
+    # Parse a canonical package list: strip comments and blank lines, sort.
+    # Uses fish string ops (no reliance on grep's \s handling across platforms).
+    function __drift_parse_list
+        test -f $argv[1]; or return 0
+        for line in (cat $argv[1])
+            set -l trimmed (string trim -- $line)
+            test -z "$trimmed"; and continue
+            string match -q -- '#*' $trimmed; and continue
+            echo $trimmed
+        end | sort
+    end
+
+    # Echo 1 if the canonical list has at least one real (non-comment) entry,
+    # else 0. Used to distinguish "genuinely empty list" from "read failed".
+    function __drift_list_has_entries
+        set -l entries (__drift_parse_list $argv[1])
+        if test (count $entries) -gt 0
+            echo 1
+        else
+            echo 0
+        end
+    end
+
+    # Extract `.name` values from a captured `nix eval --json` log.
+    # nix prints warnings ("Git tree is dirty", "Using saved setting", obsolete
+    # option traces) to the same stream we capture, so the log is NOT pure JSON.
+    # Grab the single JSON array line (starts with `[`) and feed only that to jq.
+    function __drift_json_names
+        test -f $argv[1]; or return 0
+        set -l json_line (grep -m1 '^\[' $argv[1] 2>/dev/null)
+        test -n "$json_line"; or return 0
+        printf '%s\n' $json_line | jq -r '.[].name' 2>/dev/null | sort
+    end
+
+    # Run a command with a timeout (seconds). Stdout captured to $argv[-1] logfile.
+    # Usage: __drift_run_timed <timeout_secs> <logfile> <cmd>
+    # Returns the exit code (124 = timed out).
+    function __drift_run_timed
+        set -l timeout_secs $argv[1]
+        set -l logfile $argv[2]
+        set -l cmd (string join " " $argv[3..-1])
+        set -l exitfile {$logfile}.exit
+
+        fish -c "$cmd >$logfile 2>&1; echo \$status >$exitfile" &
+        set -l job_pid $last_pid
+
+        perl -e "sleep $timeout_secs; kill 'TERM', $job_pid; sleep 2; kill 'KILL', $job_pid;" \
+            >/dev/null 2>&1 &
+        set -l watchdog_pid $last_pid
+
+        wait $job_pid 2>/dev/null
+        kill $watchdog_pid 2>/dev/null
+
+        if test -f $exitfile
+            set -l rc (string trim (cat $exitfile))
+            rm -f $exitfile
+            return $rc
+        else
+            rm -f $exitfile
+            return 124
+        end
+    end
 
     function __drift_header
         echo
@@ -59,6 +136,13 @@ function nixx-drift
                 gum style --foreground $p_muted --faint "    $extra"
             end
 
+            # Report-only mode (no TTY): list the item and move on.
+            if test "$__drift_interactive" -eq 0
+                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                set -g __drift_action dismiss
+                return
+            end
+
             set -l choice (gum choose \
                 --cursor.foreground $p_purple \
                 --selected.foreground $p_purple \
@@ -87,6 +171,13 @@ function nixx-drift
                 gum style --foreground $p_muted --faint "    $extra"
             end
 
+            # Report-only mode (no TTY): list the item and move on.
+            if test "$__drift_interactive" -eq 0
+                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                set -g __drift_action dismiss
+                return
+            end
+
             set -l choice (gum choose \
                 --cursor.foreground $p_purple \
                 --selected.foreground $p_purple \
@@ -107,6 +198,10 @@ function nixx-drift
     # Confirm a destructive action. Returns 0 if confirmed.
     function __drift_confirm_destructive
         set -l msg $argv[1]
+        # Never perform destructive actions without an interactive TTY.
+        if test "$__drift_interactive" -eq 0
+            return 1
+        end
         set -l choice (gum choose \
             --cursor.foreground $p_red \
             --selected.foreground $p_red \
@@ -125,23 +220,57 @@ function nixx-drift
         __drift_section "Homebrew"
 
         set -l hn $hostname
+        set -l nix_log /tmp/nixx-drift-nix-eval-(date +%s).log
 
-        # Declared brews from nix eval
-        set -l declared_brews (cd $nix_dir && \
-            nix eval ".#darwinConfigurations.$hn.config.homebrew.brews" \
-            --extra-experimental-features 'nix-command flakes' \
-            --json 2>/dev/null | jq -r '.[].name' 2>/dev/null | sort)
+        # Evaluate declared brews and casks with SEPARATE nix evals.
+        # NB: do NOT eval the whole `.config.homebrew` attribute — that forces
+        # evaluation of removed/renamed options (e.g. `homebrew.brewPrefix`) and
+        # errors out. Targeting `.brews`/`.casks` directly sidesteps that.
+        #
+        # Raw JSON is captured to a file (rather than piped straight into jq) so
+        # the true nix exit status is preserved — a piped `nix eval | jq` would
+        # report jq's status and silently mask a nix failure.
+        # 90s timeout: a freshly-updated flake may need to evaluate uncached.
+        set -l brews_log {$nix_log}-brews
+        __drift_run_timed 90 $brews_log \
+            "cd $__drift_nix_dir && nix eval '.#darwinConfigurations.$hn.config.homebrew.brews' --extra-experimental-features 'nix-command flakes' --json"
+        set -l brews_rc $status
+        set -l declared_brews
+        if test $brews_rc -eq 0
+            set declared_brews (__drift_json_names $brews_log)
+        end
 
-        # Declared casks from nix eval
-        set -l declared_casks (cd $nix_dir && \
-            nix eval ".#darwinConfigurations.$hn.config.homebrew.casks" \
-            --extra-experimental-features 'nix-command flakes' \
-            --json 2>/dev/null | jq -r '.[].name' 2>/dev/null | sort)
+        set -l casks_log {$nix_log}-casks
+        __drift_run_timed 90 $casks_log \
+            "cd $__drift_nix_dir && nix eval '.#darwinConfigurations.$hn.config.homebrew.casks' --extra-experimental-features 'nix-command flakes' --json"
+        set -l casks_rc $status
+        set -l declared_casks
+        if test $casks_rc -eq 0
+            set declared_casks (__drift_json_names $casks_log)
+        end
 
         if test -z "$declared_brews" -a -z "$declared_casks"
-            gum style --foreground $p_red "  ✗ Could not evaluate nix config — skipping brew drift check"
+            set -l reason
+            if test $brews_rc -eq 124 -o $casks_rc -eq 124
+                set reason " (nix eval timed out after 90s)"
+            else if test $brews_rc -ne 0 -o $casks_rc -ne 0
+                set reason " (nix eval failed)"
+            end
+            gum style --foreground $p_red "  ✗ Could not evaluate nix config — skipping brew drift check$reason"
+            # Surface the eval error so the cause isn't hidden.
+            for l in $brews_log $casks_log
+                if test -s $l
+                    set -l errline (grep -i error $l 2>/dev/null | head -1)
+                    if test -n "$errline"
+                        gum style --foreground $p_muted --faint "    $errline"
+                        gum style --foreground $p_muted --faint "    log: $l"
+                        break
+                    end
+                end
+            end
             return
         end
+        rm -f $brews_log $casks_log
 
         # For "extra" detection: brew leaves = explicitly installed, not a dep of anything else.
         # `brew leaves` returns full tap-prefixed names for tap formulae.
@@ -278,7 +407,7 @@ function nixx-drift
     function __drift_pnpm
         __drift_section "pnpm globals"
 
-        set -l canonical_file $config_dir/pnpm/globals.txt
+        set -l canonical_file $__drift_config_dir/pnpm/globals.txt
 
         if not test -f $canonical_file
             gum style --foreground $p_red "  ✗ $canonical_file not found — skipping"
@@ -286,15 +415,32 @@ function nixx-drift
         end
 
         # Parse canonical list (strip comments and blank lines)
-        set -l declared (grep -v '^\s*#' $canonical_file | grep -v '^\s*$' | sort)
+        set -l declared (__drift_parse_list $canonical_file)
 
-        # Installed pnpm globals (package names only)
-        # pnpm list --json returns an array; globals are at index 0
-        set -l installed (pnpm list -g --depth=0 --json 2>/dev/null \
-            | jq -r '.[0].dependencies | keys[]' 2>/dev/null | sort)
+        # Guard against a transient/empty read of the canonical list: if the file
+        # has real (non-comment) content but parsing yielded nothing, bail out
+        # rather than flagging every installed package as "extra".
+        if test -z "$declared"; and test (__drift_list_has_entries $canonical_file) -eq 1
+            gum style --foreground $p_red "  ✗ Could not read pnpm/globals.txt — skipping"
+            return
+        end
+
+        # Installed pnpm globals (package names only, 30s timeout)
+        set -l pnpm_log /tmp/nixx-drift-pnpm-(date +%s).log
+        __drift_run_timed 30 $pnpm_log "pnpm list -g --depth=0 --json"
+        set -l pnpm_rc $status
+        set -l installed
+        if test $pnpm_rc -eq 0
+            set installed (jq -r '.[0].dependencies | keys[]' $pnpm_log 2>/dev/null | sort)
+        end
+        rm -f $pnpm_log
 
         if test -z "$installed"
-            gum style --foreground $p_red "  ✗ Could not read pnpm global packages — skipping"
+            set -l reason
+            if test $pnpm_rc -eq 124
+                set reason " (timed out after 30s)"
+            end
+            gum style --foreground $p_red "  ✗ Could not read pnpm global packages — skipping$reason"
             return
         end
 
@@ -360,7 +506,7 @@ function nixx-drift
     function __drift_uv
         __drift_section "uv tools"
 
-        set -l canonical_file $config_dir/uv/tools.txt
+        set -l canonical_file $__drift_config_dir/uv/tools.txt
 
         if not test -f $canonical_file
             gum style --foreground $p_red "  ✗ $canonical_file not found — skipping"
@@ -368,7 +514,13 @@ function nixx-drift
         end
 
         # Parse canonical list
-        set -l declared (grep -v '^\s*#' $canonical_file | grep -v '^\s*$' | sort)
+        set -l declared (__drift_parse_list $canonical_file)
+
+        # Guard against a transient/empty read of the canonical list.
+        if test -z "$declared"; and test (__drift_list_has_entries $canonical_file) -eq 1
+            gum style --foreground $p_red "  ✗ Could not read uv/tools.txt — skipping"
+            return
+        end
 
         # Installed uv tools — top-level lines only (sub-executables start with "- ")
         set -l installed (uv tool list 2>/dev/null | grep -v '^-' | grep -v '^\s*$' | awk '{print $1}' | sort)
@@ -444,6 +596,10 @@ function nixx-drift
     echo
 
     # Cleanup inner functions
+    functions -e __drift_parse_list
+    functions -e __drift_list_has_entries
+    functions -e __drift_json_names
+    functions -e __drift_run_timed
     functions -e __drift_header
     functions -e __drift_section
     functions -e __drift_item
@@ -452,4 +608,7 @@ function nixx-drift
     functions -e __drift_pnpm
     functions -e __drift_uv
     set -e __drift_action
+    set -e __drift_interactive
+    set -e __drift_config_dir
+    set -e __drift_nix_dir
 end
