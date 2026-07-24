@@ -1,11 +1,10 @@
-function fix-audio
+function fix-audio --description "Normalise audio in a video file (loudnorm, video stream copied)"
     if test (count $argv) -ne 1
-        echo "usage: fix-audio /path/to/file.mp4"
+        echo "usage: fix-audio /path/to/file.(mp4|mov|mkv|m4a|wav)"
         return 1
     end
 
     set in "$argv[1]"
-
     if not test -f "$in"
         echo "error: file not found: $in"
         return 1
@@ -17,46 +16,41 @@ function fix-audio
     set ext (string split -r -m1 . "$base")[2]
     if test -z "$ext"
         set ext mp4
-        set base "$name.$ext"
     end
 
-    set tmp_out "$dir/$name-adjusted.$ext"
-    set final_out "$dir/$base"
-    set orig_renamed "$dir/$name-original.$ext"
+    set tmp "$dir/.$name.normalising.$ext"
+    set out "$dir/$base"
 
-    # 1) Render adjusted audio to a temp file
+    # Build an available -original name in Trash (avoid clobbering)
+    set trashdir "$HOME/.Trash"
+    set orig_base "$name-original.$ext"
+    set orig_path "$trashdir/$orig_base"
+    set i 1
+    while test -e "$orig_path"
+        set orig_path "$trashdir/$name-original-$i.$ext"
+        set i (math $i + 1)
+    end
+
+    # Normalise audio; keep video stream (no re-encode)
     ffmpeg -hide_banner -y -i "$in" \
         -c:v copy \
-        -af "pan=stereo|FL=FL|FR=FL,loudnorm=I=-16:LRA=11:TP=-1.5:dual_mono=true" \
+        -af "loudnorm=I=-16:LRA=11:TP=-1.5" \
         -c:a aac -b:a 192k \
-        "$tmp_out"
-
+        "$tmp"
     if test $status -ne 0
-        echo "error: ffmpeg failed; original left untouched"
+        echo "error: ffmpeg failed"
+        test -f "$tmp"; and rm -f "$tmp"
         return 1
     end
 
-    # 2) Rename original to -original alongside it (so we can keep the final name for the adjusted file)
-    #    Use mv so it stays on the same volume and preserves metadata as per normal POSIX behavior.
-    mv -n "$in" "$orig_renamed"
+    # Move original to Trash as *-original*, replace with normalised
+    mkdir -p "$trashdir"
+    mv -f "$in" "$orig_path"
     if test $status -ne 0
-        echo "error: could not rename original to: $orig_renamed"
-        rm -f "$tmp_out"
+        echo "error: failed moving original to Trash"
+        rm -f "$tmp"
         return 1
     end
 
-    # 3) Move adjusted into the original’s name
-    mv -f "$tmp_out" "$final_out"
-    if test $status -ne 0
-        echo "error: could not place adjusted file at original path; restoring original name"
-        mv -f "$orig_renamed" "$in"
-        rm -f "$tmp_out"
-        return 1
-    end
-
-    # 4) Send the renamed original to Trash (not permanent delete)
-    #    Finder’s ‘delete’ moves files to Trash.
-    osascript -ss -e 'tell application "Finder" to delete POSIX file '"\"$orig_renamed\"" > /dev/null
-
-    # Done
+    mv -f "$tmp" "$out"
 end
