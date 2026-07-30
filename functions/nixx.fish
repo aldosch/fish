@@ -387,13 +387,13 @@ function nixx
             # --- neovim ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Neovim"
-            __nixx_step "Updating neovim plugins" --timeout 180 \
+            __nixx_step "Updating neovim plugins" --timeout 300 \
                 "nvim --headless '+Lazy! sync' '+qa!'"
 
             # --- agent skills ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Agent Skills"
-            __nixx_step "Updating agent skills" --timeout 90 \
+            __nixx_step "Updating agent skills" --timeout 180 \
                 "pnpx skills update -g -y"
 
             # --- claude ---
