@@ -1,11 +1,15 @@
 # nixx-drift - package drift detection and remediation
 #
-# Scans four surfaces for drift between what's declared in config and what's
+# Scans six surfaces for drift between what's declared in config and what's
 # actually installed:
 #   1. Homebrew brews    ← nix/modules/apps.nix
 #   2. Homebrew casks    ← nix/modules/apps.nix
 #   3. pnpm globals      ← pnpm/globals.txt
 #   4. uv tools          ← uv/tools.txt
+#   5. opencode plugin   ← opencode/pnpm-lock.yaml (node_modules is gitignored)
+#   6. model catalog     ← opencode/model-catalog.json (staleness check against
+#                          the live Vercel AI Gateway catalog, not an
+#                          install/declare drift — informational only)
 #
 # Called directly as `nixx check` / `nixx d`, or invoked from nixx.fish after
 # a full update. Returns 0 if no drift found, 1 if any unresolved drift remains.
@@ -585,6 +589,97 @@ function nixx-drift
     end
 
     # -------------------------------------------------------------------------
+    # Surface 5: opencode plugin (node_modules is gitignored)
+    # -------------------------------------------------------------------------
+
+    function __drift_opencode
+        __drift_section "opencode plugin"
+
+        set -l dir $__drift_config_dir/opencode
+        set -l lockfile $dir/pnpm-lock.yaml
+        set -l plugin_path $dir/node_modules/@opencode-ai/plugin/package.json
+
+        if not test -f "$lockfile"
+            gum style --foreground $p_red "  ✗ opencode/pnpm-lock.yaml not found — skipping"
+            return
+        end
+
+        # The plugin resolves if node_modules/@opencode-ai/plugin exists.
+        # This is the exact failure that breaks every prompt with
+        # "Cannot find module '@opencode-ai/plugin'" when node_modules is
+        # missing (fresh checkout, git clean -fdx, pnpm store prune).
+        set -l found_drift 0
+
+        if not test -f "$plugin_path"
+            set found_drift 1
+            __drift_item missing "opencode plugin" "@opencode-ai/plugin" \
+                "declared in opencode/pnpm-lock.yaml but not installed (node_modules missing)"
+            switch "$__drift_action"
+                case install
+                    if type -q opencode-restore
+                        gum spin --spinner dot --spinner.foreground $p_purple \
+                            --title "  Restoring opencode plugin..." \
+                            -- fish -c "opencode-restore"
+                        if test $status -eq 0
+                            gum style --foreground $p_green "  ✓ Restored @opencode-ai/plugin"
+                        else
+                            gum style --foreground $p_red "  ✗ Failed to restore @opencode-ai/plugin"
+                        end
+                    else
+                        gum style --foreground $p_muted \
+                            "    → Run: pnpm install --dir ~/.config/opencode"
+                    end
+            end
+        end
+
+        if test $found_drift -eq 0
+            gum join --horizontal \
+                (gum style --foreground $p_green "  ✓") \
+                (gum style --foreground $p_fg " No drift")
+        end
+    end
+
+    # -------------------------------------------------------------------------
+    # Surface 6: model catalog freshness (informational, no install/remove)
+    # -------------------------------------------------------------------------
+    #
+    # Unlike surfaces 1-5, there's no mechanical fix here — deciding whether a
+    # newer model is actually a better pick needs judgment (a flashy new
+    # release isn't automatically an upgrade for our use case; see the
+    # Claude Fable 5 case, a newer/pricier creative-only model that looked
+    # like an Opus upgrade but wasn't). So this surface only ever reports.
+
+    function __drift_model_catalog
+        __drift_section "model catalog"
+
+        if not type -q opencode-model-catalog-check
+            gum style --foreground $p_muted "  ✗ opencode-model-catalog-check function not found — skipping"
+            return
+        end
+
+        set -l out (opencode-model-catalog-check 2>&1)
+        set -l rc $status
+
+        if test $rc -eq 0
+            gum join --horizontal \
+                (gum style --foreground $p_green "  ✓") \
+                (gum style --foreground $p_fg " No drift")
+        else if test $rc -eq 2
+            for line in $out
+                if string match -q '  ▸*' -- $line
+                    gum join --horizontal \
+                        (gum style --foreground $p_orange "  ▸") \
+                        (gum style --foreground $p_fg " "(string sub -s 4 -- $line))
+                else if string match -q '  →*' -- $line
+                    gum style --foreground $p_muted --faint "    "(string sub -s 4 -- $line)
+                end
+            end
+        else
+            gum style --foreground $p_muted "  ✗ check couldn't run — $out"
+        end
+    end
+
+    # -------------------------------------------------------------------------
     # Run all checks
     # -------------------------------------------------------------------------
 
@@ -592,6 +687,8 @@ function nixx-drift
     __drift_brew
     __drift_pnpm
     __drift_uv
+    __drift_opencode
+    __drift_model_catalog
 
     echo
 
@@ -607,6 +704,8 @@ function nixx-drift
     functions -e __drift_brew
     functions -e __drift_pnpm
     functions -e __drift_uv
+    functions -e __drift_opencode
+    functions -e __drift_model_catalog
     set -e __drift_action
     set -e __drift_interactive
     set -e __drift_config_dir

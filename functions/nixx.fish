@@ -407,6 +407,8 @@ function nixx
             gum style --foreground $p_cyan --bold "⚙  Node"
             __nixx_step "Installing latest Node (fnm)" \
                 "fnm install --lts && fnm default lts-latest"
+            __nixx_step "Enabling corepack shims" \
+                "corepack enable"
             __nixx_step "Updating pnpm (corepack)" \
                 "corepack prepare pnpm@latest --activate"
             __nixx_step "Updating pnpm globals" --timeout 120 \
@@ -426,6 +428,18 @@ function nixx
             __nixx_brew_upgrade
             __nixx_step "Cleaning up Homebrew" \
                 "brew cleanup"
+
+            # --- opencode plugin ---
+            # @opencode-ai/plugin is a runtime dep of opencode/tools/research.ts.
+            # node_modules is gitignored, so it must be reinstalled from the
+            # tracked pnpm-lock.yaml every update. `pnpm update` advances the
+            # caret range so the plugin tracks the brew-installed CLI generation
+            # without manual bumps. opencode-restore does the same thing
+            # standalone (for a new machine or manual sync).
+            echo
+            gum style --foreground $p_cyan --bold "⚙  OpenCode"
+            __nixx_step "Updating opencode plugin" --timeout 120 \
+                "pnpm update --dir ~/.config/opencode"
     end
 
     # --- summary ---

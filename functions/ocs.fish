@@ -11,11 +11,83 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
 
     set -l sql_dir "$HOME/.config/fish/sql"
 
-    # Colors for the left column (date, path, title)
+    # ── Ensure the expression index exists (additive, non-destructive) ──
+    # Without this the correlated subquery in ocs-list.sql scans all part
+    # rows and takes ~3s. With the index it uses the index and takes ~0.1s.
+    # IF NOT EXISTS makes this a no-op on subsequent runs.
+    sqlite3 "$db" \
+        "CREATE INDEX IF NOT EXISTS part_text_expr_idx ON part(session_id, json_extract(data, '\$.text')) WHERE json_extract(data, '\$.type') = 'text' AND json_extract(data, '\$.text') IS NOT NULL AND json_extract(data, '\$.text') != '';" 2>/dev/null &
+
+    # ── Two-layer cache ──────────────────────────────────────────────────
+    # Layer 1 (raw):   raw SQL TSV — mode-independent, invalidated by DB mtime
+    # Layer 2 (render): colored TSV ready for fzf — mode-specific, invalidated
+    #                   by raw file mtime. Background-refreshed if >30s old.
+    set -l cache_dir "$HOME/.cache/ocs"
+    set -l raw_cache "$cache_dir/sessions.raw.tsv"
+    set -l mode (defaults read -g AppleInterfaceStyle 2>/dev/null)
+    if test "$mode" = Dark
+        set mode "dark"
+    else
+        set mode "light"
+    end
+    set -l render_cache "$cache_dir/sessions.$mode.tsv"
+
+    mkdir -p "$cache_dir"
+
+    set -l db_mtime (stat -f %m "$db" 2>/dev/null; or echo 0)
+    set -l raw_mtime (stat -f %m "$raw_cache" 2>/dev/null; or echo 0)
+    set -l now_epoch (date +%s)
+    set -l today_date (date +%Y-%m-%d)
+
+    # Layer 1: regenerate raw cache if DB is newer (or cache doesn't exist)
+    if test "$raw_mtime" -lt "$db_mtime"
+        sqlite3 -batch "$db" < "$sql_dir/ocs-list.sql" > "$raw_cache" 2>/dev/null
+        set raw_mtime (stat -f %m "$raw_cache" 2>/dev/null; or echo 0)
+    end
+
+    # Layer 2: render (color + relative dates) from raw cache
+    set -l render_mtime (stat -f %m "$render_cache" 2>/dev/null; or echo 0)
+    set -l render_age (math $now_epoch - $render_mtime)
+
+    # Colors for the displayed columns (title, date, path)
     set -l c_date (set_color $p_muted)
     set -l c_path (set_color $p_cyan)
     set -l c_title (set_color $p_fg)
     set -l c_reset (set_color normal)
+
+    # fzf color scheme built from the adaptive palette — ensures the selected
+    # line (bg+) and match highlights (hl/hl+) have good contrast in both
+    # light and dark mode. Without this, fzf uses the terminal default which
+    # makes colored text unreadable on the selection background in light mode.
+    set -l fzf_colors \
+        "bg+:$p_element,fg+:$p_fg,hl:$p_purple,hl+:$p_purple,"\
+"pointer:$p_purple,prompt:$p_cyan,header:$p_muted,"\
+"info:$p_muted,border:$p_element,gutter:$p_bg"
+
+    # Render: raw TSV → colored fzf-ready TSV via awk script
+    # Render in foreground if render cache is stale (missing, or raw was just regenerated)
+    if test "$render_mtime" -lt "$raw_mtime"
+        awk -F'\t' -v OFS='\t' \
+            -v home="$HOME" -v now="$now_epoch" -v today="$today_date" \
+            -v dc="$c_date" -v cp="$c_path" -v ct="$c_title" -v cr="$c_reset" \
+            -f "$sql_dir/ocs-render.awk" \
+            < "$raw_cache" > "$render_cache"
+        set render_mtime (stat -f %m "$render_cache" 2>/dev/null; or echo 0)
+        set render_age (math $now_epoch - $render_mtime)
+    end
+
+    # Background refresh: if render is >30s old but raw is still current (DB
+    # unchanged), re-render relative dates from raw. Non-blocking, atomic mv.
+    # No lock file — worst case is a redundant 0.3s awk if two launches race.
+    if test "$render_age" -gt 30 -a "$raw_mtime" -ge "$db_mtime"
+        set -l tmp_render "$render_cache.tmp"
+        fish -c "awk -F'\t' -v OFS='\t' \
+                    -v home='$HOME' -v now='$now_epoch' -v today='$today_date' \
+                    -v dc='$c_date' -v cp='$c_path' -v ct='$c_title' -v cr='$c_reset' \
+                    -f '$sql_dir/ocs-render.awk' \
+                    < '$raw_cache' > '$tmp_render' \
+                 && mv '$tmp_render' '$render_cache'" >/dev/null 2>&1 &
+    end
 
     # Pre-seed fzf query from args
     set -l fzf_query ""
@@ -23,47 +95,16 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
         set fzf_query (string join " " -- $argv)
     end
 
-    # Pipe session list through awk for date formatting, ~ substitution, ANSI coloring, and padding.
-    # TSV in:  id(1) \t epoch(2) \t path(3) \t title(4) \t content(5)
-    # TSV out: id(1) \t title(2) \t date(3) \t path(4) \t content(5)
-    # date: relative ("5mins", "2hrs", "just now") if today, YYYY-MM-DD if older.
-    # title padded to 55 chars (truncated with … if longer), path to 30 chars,
-    # so columns align. BSD awk lacks systime()/strftime(), epoch/today passed from fish.
-    set -l now_epoch (date +%s)
-    set -l today_date (date +%Y-%m-%d)
-    set -l selected (sqlite3 -batch "$db" < "$sql_dir/ocs-list.sql" 2>/dev/null | \
-        awk -F'\t' -v OFS='\t' \
-            -v home="$HOME" \
-            -v now="$now_epoch" \
-            -v today="$today_date" \
-            -v dc="$c_date" \
-            -v cp="$c_path" \
-            -v ct="$c_title" \
-            -v cr="$c_reset" \
-            '{ gsub(home, "~", $3);
-               # BSD awk has no strftime — use date -r for epoch formatting
-               cmd = "date -r " $2 " +%Y-%m-%d";
-               cmd | getline sdate;
-               close(cmd);
-               if (today == sdate) {
-                   diff = now - $2;
-                   if (diff < 60) label = "just now";
-                   else if (diff < 3600) label = int(diff/60) "mins";
-                   else label = int(diff/3600) "hrs";
-               } else {
-                   label = sdate;
-               }
-               d = sprintf("%-12s", label);
-               t = $4;
-               if (length(t) > 55) t = substr(t, 1, 54) "\xe2\x80\xa6";
-               t = sprintf("%-55s", t);
-               p = $3;
-               if (length(p) > 30) p = substr(p, 1, 29) "\xe2\x80\xa6";
-               p = sprintf("%-30s", p);
-               printf "%s\t%s%s%s\t%s%s%s\t%s%s%s\t%s\n", \
-                      $1, ct, t, cr, dc, d, cr, cp, p, cr, $5 }' | \
+    # Set BAT_THEME for the preview subshell so syntax highlighting matches
+    # the current mode. Without this, bat defaults to a dark theme which is
+    # washed out in light mode.
+    set -lx BAT_THEME (test "$mode" = dark; and echo Dracula; or echo "Catppuccin Latte")
+
+    # Pipe the rendered cache directly to fzf
+    set -l selected (cat "$render_cache" | \
         fzf \
             --ansi \
+            --color="$fzf_colors" \
             --delimiter='\t' \
             --with-nth=2,3,4 \
             --layout=reverse \
