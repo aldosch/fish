@@ -225,6 +225,9 @@ function nixx
         set -l t_start (date +%s)
         set -l status_code 0
 
+        # gate: pin opencode if its matching plugin is <2 days old on npm
+        opencode-upgrade-check
+
         if test "$__nixx_verbose" -eq 1
             echo
             gum style --foreground $p_muted --bold "  $label"
@@ -384,16 +387,25 @@ function nixx
             __nixx_step "Collecting nix garbage" \
                 "nix-collect-garbage -d"
 
+            # --- brew ---
+            echo
+            gum style --foreground $p_cyan --bold "⚙  Homebrew"
+            __nixx_step "Updating Homebrew" --timeout 60 \
+                "brew update"
+            __nixx_brew_upgrade
+            __nixx_step "Cleaning up Homebrew" \
+                "brew cleanup"
+
             # --- neovim ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Neovim"
-            __nixx_step "Updating neovim plugins" --timeout 300 \
+            __nixx_step "Updating neovim plugins" --timeout 600 \
                 "nvim --headless '+Lazy! sync' '+qa!'"
 
             # --- agent skills ---
             echo
             gum style --foreground $p_cyan --bold "⚙  Agent Skills"
-            __nixx_step "Updating agent skills" --timeout 180 \
+            __nixx_step "Updating agent skills" --timeout 300 \
                 "pnpx skills update -g -y"
 
             # --- claude ---
@@ -420,15 +432,6 @@ function nixx
             __nixx_step "Updating uv tools" --timeout 120 \
                 "uv tool upgrade --all"
 
-            # --- brew ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Homebrew"
-            __nixx_step "Updating Homebrew" --timeout 60 \
-                "brew update"
-            __nixx_brew_upgrade
-            __nixx_step "Cleaning up Homebrew" \
-                "brew cleanup"
-
             # --- opencode plugin ---
             # @opencode-ai/plugin is a runtime dep of opencode/tools/research.ts.
             # node_modules is gitignored, so it must be reinstalled from the
@@ -436,10 +439,13 @@ function nixx
             # caret range so the plugin tracks the brew-installed CLI generation
             # without manual bumps. opencode-restore does the same thing
             # standalone (for a new machine or manual sync).
+            # The retry strips stale node_modules if pnpm's store version
+            # changed (ERR_PNPM_UNEXPECTED_STORE, caused by a standalone pnpm
+            # install leaving a newer store than corepack's).
             echo
             gum style --foreground $p_cyan --bold "⚙  OpenCode"
             __nixx_step "Updating opencode plugin" --timeout 120 \
-                "pnpm update --dir ~/.config/opencode"
+                "pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
     end
 
     # --- summary ---

@@ -1,7 +1,8 @@
 # nixx-drift - package drift detection and remediation
 #
-# Scans six surfaces for drift between what's declared in config and what's
-# actually installed:
+# Scans eight surfaces for drift between what's declared in config and what's
+# actually installed (or, for surface 8, between what nix generates and what's
+# on disk):
 #   1. Homebrew brews    ← nix/modules/apps.nix
 #   2. Homebrew casks    ← nix/modules/apps.nix
 #   3. pnpm globals      ← pnpm/globals.txt
@@ -10,6 +11,15 @@
 #   6. model catalog     ← opencode/model-catalog.json (staleness check against
 #                          the live Vercel AI Gateway catalog, not an
 #                          install/declare drift — informational only)
+#   7. opencode MCP cmds ← opencode/opencode.json local MCPs must not use `pnpx`
+#                          (broken under pnpm 11's global virtual store for ESM
+#                          packages); plus a functional smoke test from a neutral
+#                          directory so a silent pnpm dlx regression is caught
+#                          before it takes down every pnpx-based MCP at once.
+#   8. generated files   ← files written by nix activation scripts (ghostty
+#                          config) compared against /etc/static/<name>-expected
+#                          exposed via environment.etc; catches manual edits to
+#                          files that should only be nix-generated.
 #
 # Called directly as `nixx check` / `nixx d`, or invoked from nixx.fish after
 # a full update. Returns 0 if no drift found, 1 if any unresolved drift remains.
@@ -680,7 +690,264 @@ function nixx-drift
     end
 
     # -------------------------------------------------------------------------
-    # Run all checks
+    # Surface 7: opencode MCP commands (pnpx → npx + functional smoke test)
+    # -------------------------------------------------------------------------
+    #
+    # pnpm 11 switched `pnpm dlx` to a global virtual store. ESM packages
+    # (mcp-remote, chrome-devtools-mcp, etc.) hit ERR_MODULE_NOT_FOUND from a
+    # store/v11/links/... path that is never created, but ONLY when launched
+    # from a non-workspace directory. From ~/.config it happens to work because
+    # the nearby opencode/pnpm-workspace.yaml gives pnpm a local virtual store
+    # to resolve against, so the bug is invisible until you run `ocv` from a
+    # customer dir like ~/vercel/customers/sbs and every pnpx-based MCP fails
+    # silently with "Connection closed".
+    #
+    # We already migrated opencode.json to `npx -y`, so this check guards
+    # against regressions: (A) someone adding a new local MCP with `pnpx`, and
+    # (B) a future pnpm/corepack upgrade re-breaking `pnpx` so the `pnpx skills`
+    # step in nixx.fish also needs attention.
+
+    function __drift_mcp_commands
+        __drift_section "opencode MCP commands"
+
+        set -l cfg $__drift_config_dir/opencode/opencode.json
+        if not test -f "$cfg"
+            gum style --foreground $p_red "  ✗ opencode/opencode.json not found — skipping"
+            return
+        end
+
+        set -l found_drift 0
+
+        # --- Part A: scan for `pnpx` in local MCP commands ---
+        # `jq -r` walks every mcp entry; for local ones, print "name|cmd0|cmd1..."
+        # so we can detect `pnpx` as the first command token.
+        set -l pnpx_entries
+        set -l entries_raw (jq -r '
+            .mcp // {} | to_entries[]
+            | select(.value.type == "local")
+            | .key + "\t" + ((.value.command // []) | join(" "))
+        ' "$cfg" 2>/dev/null)
+
+        for line in $entries_raw
+            set -l parts (string split \t -- $line)
+            set -l name $parts[1]
+            set -l cmd $parts[2]
+            set -l first_token (string split ' ' -- $cmd)[1]
+            if test "$first_token" = pnpx
+                set pnpx_entries $pnpx_entries $name
+            end
+        end
+
+        if test (count $pnpx_entries) -gt 0
+            set found_drift 1
+            for name in $pnpx_entries
+                gum join --horizontal \
+                    (gum style --foreground $p_orange "  ▸ wrong cmd") \
+                    (gum style --foreground $p_fg "  $name") \
+                    (gum style --foreground $p_muted "  uses pnpx (broken under pnpm 11 for ESM pkgs)")
+                if test "$__drift_interactive" -eq 0
+                    gum style --foreground $p_muted --faint "    → report-only (no TTY); fix: change pnpx → npx -y in opencode.json"
+                else
+                    set -l choice (gum choose \
+                        --cursor.foreground $p_purple \
+                        --selected.foreground $p_purple \
+                        --header "    '$name' uses pnpx. Switch to npx -y?" \
+                        --header.foreground $p_muted \
+                        "Dismiss  (skip for now)" \
+                        "Fix now  (replace pnpx → npx -y in opencode.json)")
+                    switch "$choice"
+                        case "Fix*"
+                            # Replace "pnpx" with "npx -y" in the command array
+                            # for this MCP entry. Use jq for a safe in-place edit.
+                            set -l tmp (mktemp)
+                            if jq --arg mcp "$name" '
+                                .mcp[$mcp].command = (
+                                    .mcp[$mcp].command | map(
+                                        if . == "pnpx" then "npx" else . end
+                                    )
+                                ) | .mcp[$mcp].command |= (
+                                    . as $c
+                                    | if $c[0] == "npx" then ["npx","-y"] + $c[1:] else $c end
+                                )
+                            ' "$cfg" >$tmp 2>/dev/null
+                                mv $tmp "$cfg"
+                                gum style --foreground $p_green "  ✓ Switched '$name' to npx -y"
+                            else
+                                rm -f $tmp
+                                gum style --foreground $p_red "  ✗ Failed to patch opencode.json"
+                            end
+                    end
+                end
+            end
+        end
+
+        # --- Part B: functional smoke test — does `pnpx` still work at all? ---
+        # `pnpx skills --help` is a fast CJS smoke test (skills is already
+        # installed globally, so no download). If even this fails, pnpm dlx is
+        # fundamentally broken and the nixx.fish `pnpx skills update` step will
+        # also fail. This catches a wider pnpm regression than the config scan.
+        set -l smoke_log /tmp/nixx-drift-pnpx-smoke-(date +%s).log
+        __drift_run_timed 20 $smoke_log "cd /tmp && command pnpm dlx skills --help"
+        set -l smoke_rc $status
+        set -l smoke_broken 0
+        if test $smoke_rc -ne 0
+            set smoke_broken 1
+            set found_drift 1
+            gum join --horizontal \
+                (gum style --foreground $p_red "  ✗ pnpx broken") \
+                (gum style --foreground $p_fg " pnpm dlx smoke test failed (rc=$smoke_rc)")
+            if test -s $smoke_log
+                set -l err (grep -iE "ERR_MODULE_NOT_FOUND|Cannot find module|links/" $smoke_log 2>/dev/null | head -1)
+                if test -n "$err"
+                    gum style --foreground $p_muted --faint "    $err"
+                end
+                gum style --foreground $p_muted --faint "    log: $smoke_log"
+            end
+            gum style --foreground $p_muted \
+                "    → nixx.fish uses pnpx for skills update; if this fails, investigate pnpm/corepack."
+        else
+            rm -f $smoke_log
+        end
+
+        if test $found_drift -eq 0
+            gum join --horizontal \
+                (gum style --foreground $p_green "  ✓") \
+                (gum style --foreground $p_fg " No drift")
+        end
+    end
+
+    # -------------------------------------------------------------------------
+    # Surface 8: generated files (activation-script-managed configs)
+    # -------------------------------------------------------------------------
+    #
+    # Files like ~/.config/ghostty/config are written by nix activation scripts
+    # and should only be edited via the nix module. This surface diffs the
+    # on-disk file against the expected content exposed via environment.etc
+    # (e.g. /etc/static/ghostty-expected). If they differ, the user either
+    # manually edited the generated file or the nix module changed but hasn't
+    # been applied yet.
+    #
+    # To add a new generated file:
+    #   1. In the nix module, write the config via pkgs.writeText and expose
+    #      it with environment.etc."<name>-expected".source = <file>
+    #   2. Add a __drift_generated_file call below with the expected/actual paths
+
+    # Compare a single generated file against its expected content.
+    # Usage: __drift_generated_file <label> <expected> <actual> <source>
+    # Returns 1 if drift found, 0 if clean (so caller can aggregate).
+    function __drift_generated_file
+        set -l label $argv[1]
+        set -l expected $argv[2]
+        set -l actual $argv[3]
+        set -l source $argv[4]
+
+        if not test -f "$expected"
+            return 0  # No expected file = module not applied yet, skip
+        end
+
+        if not test -f "$actual"
+            gum join --horizontal \
+                (gum style --foreground $p_yellow "  ▸ missing") \
+                (gum style --foreground $p_fg "  $label") \
+                (gum style --foreground $p_muted "  $actual not found")
+            if test "$__drift_interactive" -eq 0
+                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+            end
+            return 1
+        end
+
+        # Compare
+        set -l diff_output (diff -u "$expected" "$actual" 2>/dev/null)
+        set -l diff_rc $status
+
+        if test $diff_rc -eq 0
+            return 0  # No drift
+        end
+
+        # Drift detected
+        gum join --horizontal \
+            (gum style --foreground $p_orange "  ▸ modified") \
+            (gum style --foreground $p_fg "  $label") \
+            (gum style --foreground $p_muted "  manually edited, diverged from nix-generated content")
+
+        # Show diff with colors (skip --- and +++ header lines)
+        for line in $diff_output
+            set -l first (string sub -l 1 -- $line)
+            switch $first
+                case '+'
+                    if not string match -q -- '+++*' $line
+                        gum style --foreground $p_green "    $line"
+                    end
+                case '-'
+                    if not string match -q -- '---*' $line
+                        gum style --foreground $p_red "    $line"
+                    end
+                case '@'
+                    gum style --foreground $p_muted --faint "    $line"
+                case '*'
+                    if test "$line" != ""
+                        gum style --foreground $p_muted "    $line"
+                    end
+            end
+        end
+
+        if test "$__drift_interactive" -eq 0
+            gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+            return 1
+        end
+
+        set -l choice (gum choose \
+            --cursor.foreground $p_purple \
+            --selected.foreground $p_purple \
+            --header "    $label diverged from nix. What should happen?" \
+            --header.foreground $p_muted \
+            "Migrate  (open nix source in nvim to capture changes)" \
+            "Discard  (overwrite from nix, lose manual edits)" \
+            "Dismiss  (skip for now)")
+
+        switch "$choice"
+            case "Migrate*"
+                gum style --foreground $p_muted "  → Opening $source in nvim..."
+                nvim "$source"
+                set -l rebuild (gum choose \
+                    --cursor.foreground $p_purple \
+                    --selected.foreground $p_purple \
+                    --header "    Rebuild and apply now?" \
+                    --header.foreground $p_muted \
+                    "Yes  (nixx l)" \
+                    "No  (I'll do it later)")
+                if string match -q "Yes*" -- "$rebuild"
+                    nixx l
+                end
+            case "Discard*"
+                cp "$expected" "$actual"
+                gum style --foreground $p_green "  ✓ Overwrote $actual from nix"
+        end
+
+        return 1
+    end
+
+    function __drift_generated
+        __drift_section "generated files"
+
+        set -l found_drift 0
+
+        # Ghostty config: nix/modules/ghostty.nix writes ~/.config/ghostty/config
+        # via activation script; expected content at /etc/static/ghostty-expected
+        __drift_generated_file \
+            "ghostty config" \
+            /etc/static/ghostty-expected \
+            ~/.config/ghostty/config \
+            $__drift_nix_dir/modules/ghostty.nix
+        or set found_drift 1
+
+        if test $found_drift -eq 0
+            gum join --horizontal \
+                (gum style --foreground $p_green "  ✓") \
+                (gum style --foreground $p_fg " No drift")
+        end
+    end
+
     # -------------------------------------------------------------------------
 
     __drift_header
@@ -689,6 +956,8 @@ function nixx-drift
     __drift_uv
     __drift_opencode
     __drift_model_catalog
+    __drift_mcp_commands
+    __drift_generated
 
     echo
 
@@ -706,6 +975,9 @@ function nixx-drift
     functions -e __drift_uv
     functions -e __drift_opencode
     functions -e __drift_model_catalog
+    functions -e __drift_mcp_commands
+    functions -e __drift_generated_file
+    functions -e __drift_generated
     set -e __drift_action
     set -e __drift_interactive
     set -e __drift_config_dir
