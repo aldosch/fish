@@ -8,7 +8,7 @@ function git-status-pretty
     # ──────────────────────────────────────────────────────
 
     if not type -q gum
-        echo "Error: gum is not installed. Install with 'brew install gum'"
+        echo "Error: gum is not installed. add 'gum' to nix/modules/apps.nix then run nixx l"
         return 1
     end
 
@@ -17,7 +17,7 @@ function git-status-pretty
 
     set -l git_status (git status --short)
     if test -z "$git_status"
-        gum style --foreground $p_green "✅ Working tree clean"
+        gum style --foreground $p_green "nice"
         return 0
     end
 
@@ -107,4 +107,6 @@ function git-status-pretty
         _print_aligned $untracked $p_cyan2
         echo
     end
+
+    functions -e _print_aligned
 end

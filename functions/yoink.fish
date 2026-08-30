@@ -35,13 +35,7 @@ function _yoink_count_lines
 end
 
 function yoink
-    # ── colour palette ────────────────────────────────────────────────
-    set -l C_ACCENT "#A78BFA"   # purple
-    set -l C_DIM    "#6B7280"   # muted grey
-    set -l C_NEW    "#34D399"   # green   → new
-    set -l C_UPD    "#FBBF24"   # amber   → updated
-    set -l C_WARN   "#F87171"   # red     → warning
-    set -l C_INFO   "#60A5FA"   # blue    → info
+    _aldo_dracula_apply_palette
 
     argparse 'p/pages=' 'e/ext=' 'h/help' -- $argv
     or return 1
@@ -131,28 +125,28 @@ function yoink
     echo ""
     gum style \
         --border=rounded \
-        --border-foreground=$C_ACCENT \
+        --border-foreground=$p_purple \
         --padding="0 2" \
         --bold \
         "  yoink  $url"
     echo ""
 
     if test $is_rerun -eq 1
-        gum style --foreground=$C_UPD --bold "  ↻  re-run — only changes will be highlighted"
+        gum style --foreground=$p_orange --bold "  ↻  re-run — only changes will be highlighted"
         echo ""
     end
 
-    gum style --foreground=$C_DIM "  domain   $domain"
-    gum style --foreground=$C_DIM "  output   $outdir/"
-    gum style --foreground=$C_DIM "  pages    $max_pages"
+    gum style --foreground=$p_muted "  domain   $domain"
+    gum style --foreground=$p_muted "  output   $outdir/"
+    gum style --foreground=$p_muted "  pages    $max_pages"
     # wrap extensions into tidy groups rather than one overflowing line
-    gum style --foreground=$C_DIM "  assets   docs  · pdf docx xlsx pptx doc odt ods odp"
-    gum style --foreground=$C_DIM "           arch  · zip tar gz bz2 7z rar"
-    gum style --foreground=$C_DIM "           data  · csv json yaml yml toml xml ndjson"
-    gum style --foreground=$C_DIM "           text  · md rst txt org"
-    gum style --foreground=$C_DIM "           image · png jpg jpeg gif webp svg ico"
-    gum style --foreground=$C_DIM "           video · mp4 webm mov"
-    gum style --foreground=$C_DIM "           ebook · epub mobi"
+    gum style --foreground=$p_muted "  assets   docs  · pdf docx xlsx pptx doc odt ods odp"
+    gum style --foreground=$p_muted "           arch  · zip tar gz bz2 7z rar"
+    gum style --foreground=$p_muted "           data  · csv json yaml yml toml xml ndjson"
+    gum style --foreground=$p_muted "           text  · md rst txt org"
+    gum style --foreground=$p_muted "           image · png jpg jpeg gif webp svg ico"
+    gum style --foreground=$p_muted "           video · mp4 webm mov"
+    gum style --foreground=$p_muted "           ebook · epub mobi"
     echo ""
 
     # ── create output dirs ───────────────────────────────────────────
@@ -165,7 +159,7 @@ function yoink
     # ════════════════════════════════════════════════════════════════
     # PHASE 1 — markdown content
     # ════════════════════════════════════════════════════════════════
-    gum style --foreground=$C_ACCENT --bold "▶ 1/2  content crawl"
+    gum style --foreground=$p_purple --bold "▶ 1/2  content crawl"
     echo ""
 
     set crwl_log (mktemp /tmp/yoink-crwl-XXXXXX)
@@ -173,7 +167,7 @@ function yoink
     gum spin \
         --spinner=points \
         --title="  crawling (max $max_pages pages)…" \
-        --spinner.foreground=$C_ACCENT \
+        --spinner.foreground=$p_purple \
         -- \
         fish -c "crwl crawl '$url' \
             --deep-crawl bfs \
@@ -188,7 +182,7 @@ function yoink
     if test $crwl_status -ne 0
         gum log --level=warn "crwl exited $crwl_status — content may be incomplete"
         if test -s $crwl_log
-            gum style --foreground=$C_WARN (cat $crwl_log | tail -5)
+            gum style --foreground=$p_red (cat $crwl_log | tail -5)
         end
     end
 
@@ -200,18 +194,18 @@ function yoink
         if test $is_rerun -eq 1
             set delta (math "$new_lines - $prev_md_lines")
             if test $delta -gt 0
-                gum style --foreground=$C_NEW --bold \
+                gum style --foreground=$p_green --bold \
                     "  ✓  site.md  $new_lines lines ($md_kb KB)   +"$delta" lines"
             else if test $delta -lt 0
                 set abs_delta (math "0 - $delta")
-                gum style --foreground=$C_UPD --bold \
+                gum style --foreground=$p_orange --bold \
                     "  ✓  site.md  $new_lines lines ($md_kb KB)   -$abs_delta lines"
             else
-                gum style --foreground=$C_DIM \
+                gum style --foreground=$p_muted \
                     "  ✓  site.md  $new_lines lines ($md_kb KB)   no change"
             end
         else
-            gum style --foreground=$C_NEW --bold \
+            gum style --foreground=$p_green --bold \
                 "  ✓  site.md  $new_lines lines ($md_kb KB)"
         end
     end
@@ -222,7 +216,7 @@ function yoink
     # ════════════════════════════════════════════════════════════════
     # PHASE 2 — binary assets
     # ════════════════════════════════════════════════════════════════
-    gum style --foreground=$C_ACCENT --bold "▶ 2/2  asset download"
+    gum style --foreground=$p_purple --bold "▶ 2/2  asset download"
     echo ""
 
     set wget_log (mktemp /tmp/yoink-wget-XXXXXX)
@@ -289,14 +283,14 @@ function yoink
     set robots_count (_yoink_count_lines "robots.txt" $wget_log)
     if test "$robots_count" -gt 0 2>/dev/null
         echo ""
-        gum style --foreground=$C_WARN --bold \
+        gum style --foreground=$p_red --bold \
             "  ⚠  robots.txt blocked $robots_count path(s)"
         grep "robots.txt" $wget_log 2>/dev/null \
             | string replace -r '^.*Disallowed URL ' '' \
             | string replace -r '\s.*$' '' \
             | sort -u | head -10 \
             | while read -l blocked
-                gum style --foreground=$C_DIM "     $blocked"
+                gum style --foreground=$p_muted "     $blocked"
             end
         echo ""
 
@@ -306,7 +300,7 @@ function yoink
             "  Retry without robots.txt restrictions?"
 
             echo ""
-            gum style --foreground=$C_UPD "  retrying — robots.txt ignored…"
+            gum style --foreground=$p_orange "  retrying — robots.txt ignored…"
             echo ""
 
             wget \
@@ -397,7 +391,7 @@ function yoink
     echo ""
     gum style \
         --border=rounded \
-        --border-foreground=$C_DIM \
+        --border-foreground=$p_muted \
         --padding="0 2" \
         --bold \
         "  done  $outdir/"
@@ -408,7 +402,7 @@ function yoink
         set final_lines (wc -l < "$content_dir/site.md" | string trim)
         set final_bytes (command stat -f "%z" "$content_dir/site.md" 2>/dev/null)
         set final_kb    (math -s1 "$final_bytes / 1024")
-        gum style --foreground=$C_INFO \
+        gum style --foreground=$p_cyan \
             "  content/site.md   $final_lines lines  ($final_kb KB)"
     end
 
@@ -416,29 +410,29 @@ function yoink
     echo ""
     if test $is_rerun -eq 1
         if test $count_new -gt 0
-            gum style --foreground=$C_NEW --bold "  + $count_new new"
+            gum style --foreground=$p_green --bold "  + $count_new new"
             printf "$new_files\n" | while read -l f
-                test -n "$f" && gum style --foreground=$C_NEW "  $f"
+                test -n "$f" && gum style --foreground=$p_green "  $f"
             end
         end
         if test $count_updated -gt 0
-            gum style --foreground=$C_UPD --bold "  ↻ $count_updated updated"
+            gum style --foreground=$p_orange --bold "  ↻ $count_updated updated"
             printf "$updated_files\n" | while read -l f
-                test -n "$f" && gum style --foreground=$C_UPD "  $f"
+                test -n "$f" && gum style --foreground=$p_orange "  $f"
             end
         end
         if test $count_unchanged -gt 0
-            gum style --foreground=$C_DIM "  · $count_unchanged unchanged"
+            gum style --foreground=$p_muted "  · $count_unchanged unchanged"
         end
         if test $count_new -eq 0 -a $count_updated -eq 0 -a $count_unchanged -eq 0
-            gum style --foreground=$C_DIM "  · no assets found"
+            gum style --foreground=$p_muted "  · no assets found"
         end
     else
         set total_assets (math "$count_new + $count_updated + $count_unchanged")
         if test $total_assets -gt 0
-            gum style --foreground=$C_NEW --bold "  + $total_assets asset(s) downloaded"
+            gum style --foreground=$p_green --bold "  + $total_assets asset(s) downloaded"
         else
-            gum style --foreground=$C_DIM "  · no assets found"
+            gum style --foreground=$p_muted "  · no assets found"
         end
     end
 
@@ -448,7 +442,7 @@ function yoink
     set tree_count (command find "$assets_dir" -type f -not -name ".DS_Store" 2>/dev/null | count)
     if test $tree_count -gt 0
         echo ""
-        gum style --foreground=$C_ACCENT --bold "  assets"
+        gum style --foreground=$p_purple --bold "  assets"
         tree \
             -C \
             --prune \
@@ -460,4 +454,5 @@ function yoink
     end
 
     echo ""
+    functions -e _yoink_count_lines
 end

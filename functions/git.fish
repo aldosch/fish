@@ -1,4 +1,6 @@
 function git --wraps git
+    _aldo_dracula_apply_palette
+
     # Only intercept `git clone` with HTTPS GitHub URLs.
     # Converts to SSH and tries that first, falls back to HTTPS on failure.
     # Everything else passes through untouched.
@@ -41,14 +43,14 @@ function git --wraps git
     end
 
     # Try SSH first
-    set_color yellow
+    set_color $p_yellow
     echo "→ Trying SSH: $ssh_url"
     set_color normal
     command git clone $ssh_argv
     and return
 
     # Fall back to HTTPS
-    set_color brred
+    set_color $p_red
     echo "→ SSH failed, falling back to HTTPS"
     set_color normal
     command git clone $argv[2..]

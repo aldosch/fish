@@ -119,8 +119,23 @@ function dot --argument-names subcmd
         case fix
             dotfix
 
+        case heal
+            set -l backlog ~/.local/state/dotfiles/heal-backlog.md
+            if not test -f "$backlog"; or not test -s "$backlog"
+                gum style --foreground $p_muted "  no documented heal issues"
+                return
+            end
+            if type -q bat
+                bat --style=plain --color=always --paging=never "$backlog" 2>/dev/null
+                or cat "$backlog"
+            else
+                cat "$backlog"
+            end
+            echo
+            gum style --foreground $p_muted "  → edit with: nvim $backlog"
+
         case '*'
-            echo "usage: dot [status|refresh|dismiss|log|fix]"
+            echo "usage: dot [status|refresh|dismiss|log|fix|heal]"
             return 1
     end
 end

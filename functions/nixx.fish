@@ -1,19 +1,24 @@
 # nixx - system update and build tool
 #
-#  - nixx        - full update: nix, pnpm globals, brew (sudo auth upfront)
+#  - nixx        - full update: nix, pnpm globals, brew, neovim, skills, etc.
+#                  Independent tasks run in parallel via a DAG scheduler.
+#                  Sudo is authenticated once; a background keep-alive refreshes
+#                  the timestamp every 60 s so it never expires mid-run.
+#                  The skills step uses skills-sync, which fetches all repo
+#                  pushed_at timestamps in parallel and only updates changed skills.
 #  - nixx l      - build and apply using current lock file (no updates)
 #  - nixx locked - same as nixx l
 #  - nixx b      - build only (no apply, no updates)
 #  - nixx a      - apply only (assumes already built)
 #
 # Flags:
-#  -v / --verbose  - show full command output instead of spinners
+#  -v / --verbose  - sequential execution with full command output (no parallelism)
 
 
 function nixx
     # --- gum guard ---
     if not type -q gum
-        echo "Error: gum is not installed. Install with 'brew install gum'"
+        echo "Error: gum is not installed. add 'gum' to nix/modules/apps.nix then run nixx l"
         return 1
     end
 
@@ -37,67 +42,9 @@ function nixx
         end
     end
 
-    # --- helper: format elapsed time ---
-    function __nixx_fmt_time
-        set -l secs $argv[1]
-        if test $secs -lt 60
-            echo {$secs}s
-        else
-            set -l mins (math "floor($secs / 60)")
-            set -l rem (math "$secs % 60")
-            echo {$mins}m\ {$rem}s
-        end
-    end
-
-    # --- helper: manual spinner with live hint from a log file ---
-    # Usage: __nixx_spin_with_hint <logfile> <exitfile> <label>
-    # Reads <logfile> for "==> Upgrading <pkg>" lines and updates the spinner.
-    # Runs until <exitfile> exists (written by the background process).
-    function __nixx_spin_with_hint
-        set -l logfile $argv[1]
-        set -l exitfile $argv[2]
-        set -l label $argv[3]
-        set -l frames '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏'
-        set -l n_frames (count $frames)
-        set -l i 1
-        set -l hint ""
-
-        # hide cursor
-        printf '\033[?25l'
-
-        while not test -f $exitfile
-            # parse latest "==> Upgrading <pkg>" hint from log
-            if test -f $logfile
-                set -l pkg (grep '==> Upgrading ' $logfile 2>/dev/null | tail -1 | string replace -r '^==> Upgrading ' '')
-                if test -n "$pkg"
-                    set hint (string trim $pkg)
-                end
-            end
-
-            set -l frame $frames[$i]
-            if test -n "$hint"
-                set -l line (gum join --horizontal \
-                    (gum style --foreground $p_purple " $frame") \
-                    (gum style --foreground $p_muted "  $label") \
-                    (gum style --foreground $p_muted --faint " · $hint"))
-            else
-                set -l line (gum join --horizontal \
-                    (gum style --foreground $p_purple " $frame") \
-                    (gum style --foreground $p_muted "  $label"))
-            end
-            printf '\r\033[K%s' $line
-
-            set i (math "($i % $n_frames) + 1")
-            sleep 0.1
-        end
-
-        # clear spinner line
-        printf '\r\033[K'
-        # restore cursor
-        printf '\033[?25h'
-    end
-
     # --- helper: run a step with timeout and log capture ---
+    # Used by b/a/l modes and verbose full-update. The non-verbose full-update
+    # path uses __nixx_run_dag (parallel) instead.
     # Usage: __nixx_step <label> [--timeout <seconds>] <command string...>
     # Default timeout: 300s. Output is captured; log shown on failure, deleted on success.
     function __nixx_step
@@ -130,14 +77,14 @@ function nixx
             set status_code $status
         else
             # Run command in background, capturing output to logfile.
+            # Single-shell pattern: `begin; $cmd; end` ensures the redirection
+            # captures ALL output (including compound commands with ; and ||),
+            # and single quotes in $cmd are parsed correctly by fish -c.
             # A watchdog kills the whole process tree if timeout is exceeded and
             # always writes the exitfile so the spinner loop below can never hang.
             set -l exitfile {$logfile}.exit
             set -l timedoutfile {$logfile}.timedout
-            fish -c "
-                fish -c '$cmd' >$logfile 2>&1
-                echo \$status >$exitfile
-            " &
+            fish -c "begin; $cmd; end >$logfile 2>&1; echo \$status >$exitfile" &
             set -l job_pid $last_pid
 
             # Watchdog: after timeout_secs, kill the job's entire descendant tree
@@ -219,78 +166,10 @@ function nixx
         end
     end
 
-    # --- helper: run brew upgrade with live package hints ---
-    function __nixx_brew_upgrade
-        set -l label "Upgrading Homebrew packages"
-        set -l t_start (date +%s)
-        set -l status_code 0
-
-        # gate: pin opencode if its matching plugin is <2 days old on npm
-        opencode-upgrade-check
-
-        if test "$__nixx_verbose" -eq 1
-            echo
-            gum style --foreground $p_muted --bold "  $label"
-            echo
-            brew upgrade
-            set status_code $status
-        else
-            set -l tmplog /tmp/nixx-brew-upgrade-(date +%s).log
-            set -l exitfile {$tmplog}.exit
-
-            # run brew upgrade in background; write exit code to exitfile when done
-            fish -c "brew upgrade >$tmplog 2>&1; echo \$status >$exitfile" &
-            set -l brew_pid $last_pid
-
-            # show live spinner with hints (blocks until exitfile appears)
-            __nixx_spin_with_hint $tmplog $exitfile $label
-
-            # wait for brew to fully finish (should already be done)
-            wait $brew_pid 2>/dev/null
-            set status_code (string trim (cat $exitfile 2>/dev/null; or echo 1))
-
-            # count upgraded packages from log
-            set -l raw_count (grep -c '==> Upgrading ' $tmplog 2>/dev/null)
-            if test -n "$raw_count"
-                set -g __nixx_brew_upgraded_count (string trim $raw_count)
-            else
-                set -g __nixx_brew_upgraded_count 0
-            end
-
-            rm -f $exitfile
-            if test "$status_code" = "0"
-                rm -f $tmplog
-            end
-            # keep $tmplog on failure so it can be shown below
-        end
-
-        set -l t_end (date +%s)
-        set -l elapsed (math "$t_end - $t_start")
-        set -l elapsed_str (__nixx_fmt_time $elapsed)
-
-        if test "$status_code" = "0"
-            gum join --horizontal \
-                (gum style --foreground $p_green "  ✓") \
-                (gum style --foreground $p_fg " $label") \
-                (gum style --foreground $p_muted " ($elapsed_str)")
-            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str|"
-        else
-            gum join --horizontal \
-                (gum style --foreground $p_red "  ✗") \
-                (gum style --foreground $p_fg " $label") \
-                (gum style --foreground $p_muted " ($elapsed_str)")
-            if test -n "$tmplog" -a -f "$tmplog"
-                gum style --foreground $p_muted "     log: $tmplog"
-                set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|$tmplog"
-            else
-                set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|"
-            end
-        end
-    end
-
     # --- init tracking ---
     set -g __nixx_results
     set -g __nixx_brew_upgraded_count 0
+    set -g __nixx_sudo_keep_pid 0
     set -l total_start (date +%s)
 
     # --- drift-check-only shortcut ---
@@ -320,24 +199,23 @@ function nixx
         "nixx · $mode_label" \
         (gum style --faint --foreground $p_muted "$hostname")
 
-    # --- sudo pre-auth for modes that need it ---
+    # --- sudo pre-auth + keep-alive for modes that need it ---
     switch "$mode"
         case a l locked '' '*'
-            echo
-            gum style --foreground $p_orange "  ▸ Authenticating (sudo)..."
             sudo -v 2>/dev/null
             if test $status -ne 0
                 gum style --foreground $p_red "  ✗ sudo authentication failed"
-                # cleanup
                 set -e __nixx_verbose
                 set -e __nixx_results
                 set -e __nixx_brew_upgraded_count
+                set -e __nixx_sudo_keep_pid
                 functions -e __nixx_step
-                functions -e __nixx_fmt_time
-                functions -e __nixx_spin_with_hint
-                functions -e __nixx_brew_upgrade
                 return 1
             end
+            # Keep sudo timestamp alive for the entire run (macOS default
+            # timestamp_timeout is 5 min; refresh every 60 s).
+            fish -c "while true; sudo -v 2>/dev/null; or exit; sleep 60; end" &
+            set __nixx_sudo_keep_pid $last_pid
     end
 
     # --- pre-expand hostname and extra_args for command strings ---
@@ -348,104 +226,85 @@ function nixx
     switch "$mode"
         case b
             echo
-            gum style --foreground $p_cyan --bold "⚙  Nix Build"
+            gum style --foreground $p_cyan --bold "⚙  nix build"
             __nixx_step "Building nix configuration" \
                 "cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
 
         case a
             echo
-            gum style --foreground $p_cyan --bold "⚙  Nix Apply"
+            gum style --foreground $p_cyan --bold "⚙  nix apply"
             __nixx_step "Applying nix configuration" \
                 "cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
             __nixx_step "Collecting nix garbage" \
                 "nix-collect-garbage -d"
-            __nixx_step "Cleaning up Homebrew" \
+            __nixx_step "Cleaning up homebrew" \
                 "brew cleanup"
 
         case l locked
             echo
-            gum style --foreground $p_cyan --bold "⚙  Nix Build + Apply (locked)"
+            gum style --foreground $p_cyan --bold "⚙  nix build + apply (locked)"
             __nixx_step "Building nix configuration" \
                 "cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
             __nixx_step "Applying nix configuration" \
                 "cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
             __nixx_step "Collecting nix garbage" \
                 "nix-collect-garbage -d"
-            __nixx_step "Cleaning up Homebrew" \
+            __nixx_step "Cleaning up homebrew" \
                 "brew cleanup"
 
         case '*'
-            # --- nix ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Nix"
-            __nixx_step "Updating nix flake" \
-                "cd ~/.config/nix && nix flake update"
-            __nixx_step "Building nix configuration" \
-                "cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
-            __nixx_step "Applying nix configuration" \
-                "cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
-            __nixx_step "Collecting nix garbage" \
-                "nix-collect-garbage -d"
+            # Full update: parallel DAG (non-verbose) or sequential (verbose)
+            #
+            # Single task table in DAG format: section|task_id|label|timeout|dep_ids|hint|command
+            # The verbose path iterates it sequentially; the DAG path passes it to __nixx_run_dag.
+            set -l tasks
+            set -a tasks "nix|nix-flake|Updating nix flake|300|||cd ~/.config/nix && nix flake update"
+            set -a tasks "nix|nix-build|Building nix configuration|300|nix-flake||cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
+            set -a tasks "nix|nix-apply|Applying nix configuration|300|nix-build||cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
+            set -a tasks "nix|nix-gc|Collecting nix garbage|300|nix-apply||nix-collect-garbage -d"
+            set -a tasks "brew|brew-update|Updating homebrew|60|nix-apply||brew update"
+            set -a tasks "brew|brew-upgrade|Upgrading homebrew packages|600|brew-update|==> Upgrading |opencode-upgrade-check; and brew upgrade"
+            set -a tasks "brew|brew-cleanup|Cleaning up homebrew|300|brew-upgrade||brew cleanup"
+            set -a tasks "nvim|nvim|Updating neovim plugins|600|||nvim --headless '+Lazy! sync' '+qa!'"
+            set -a tasks "skills|skills|Updating agent skills|300|||skills-sync"
+            set -a tasks "claude|claude|Installing/updating claude|60|||curl -fsSL https://claude.ai/install.sh | sh"
+            set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
+            set -a tasks "node|node-corepack-enable|Enabling corepack shims|60|node-fnm||corepack enable"
+            set -a tasks "node|node-corepack-prepare|Updating pnpm (corepack)|60|node-corepack-enable||corepack prepare pnpm@latest --activate"
+            set -a tasks "node|node-pnpm-globals|Updating pnpm globals|120|node-corepack-prepare||pnpm update -g"
+            set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
+            set -a tasks "opencode|opencode-plugin|Updating opencode plugin|120|node-pnpm-globals||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
 
-            # --- brew ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Homebrew"
-            __nixx_step "Updating Homebrew" --timeout 60 \
-                "brew update"
-            __nixx_brew_upgrade
-            __nixx_step "Cleaning up Homebrew" \
-                "brew cleanup"
+            if test "$__nixx_verbose" -eq 1
+                # --- verbose: sequential with full output ---
+                set -l cur_section ""
+                for task in $tasks
+                    set -l parts (string split "|" $task -m 6)
+                    set -l section $parts[1]
+                    set -l label $parts[3]
+                    set -l timeout $parts[4]
+                    set -l cmd $parts[7]
+                    if test "$section" != "$cur_section"
+                        echo
+                        gum style --foreground $p_cyan --bold "⚙  $section"
+                        set cur_section $section
+                    end
+                    __nixx_step "$label" --timeout $timeout "$cmd"
+                end
+            else
+                # --- parallel: DAG scheduler ---
+                echo
+                __nixx_run_dag $tasks
+                echo
 
-            # --- neovim ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Neovim"
-            __nixx_step "Updating neovim plugins" --timeout 600 \
-                "nvim --headless '+Lazy! sync' '+qa!'"
-
-            # --- agent skills ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Agent Skills"
-            __nixx_step "Updating agent skills" --timeout 300 \
-                "pnpx skills update -g -y"
-
-            # --- claude ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Claude"
-            __nixx_step "Installing/updating Claude" --timeout 60 \
-                "curl -fsSL https://claude.ai/install.sh | sh"
-
-            # --- node ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Node"
-            __nixx_step "Installing latest Node (fnm)" \
-                "fnm install --lts && fnm default lts-latest"
-            __nixx_step "Enabling corepack shims" \
-                "corepack enable"
-            __nixx_step "Updating pnpm (corepack)" \
-                "corepack prepare pnpm@latest --activate"
-            __nixx_step "Updating pnpm globals" --timeout 120 \
-                "pnpm update -g"
-
-            # --- python tools ---
-            echo
-            gum style --foreground $p_cyan --bold "⚙  Python Tools"
-            __nixx_step "Updating uv tools" --timeout 120 \
-                "uv tool upgrade --all"
-
-            # --- opencode plugin ---
-            # @opencode-ai/plugin is a runtime dep of opencode/tools/research.ts.
-            # node_modules is gitignored, so it must be reinstalled from the
-            # tracked pnpm-lock.yaml every update. `pnpm update` advances the
-            # caret range so the plugin tracks the brew-installed CLI generation
-            # without manual bumps. opencode-restore does the same thing
-            # standalone (for a new machine or manual sync).
-            # The retry strips stale node_modules if pnpm's store version
-            # changed (ERR_PNPM_UNEXPECTED_STORE, caused by a standalone pnpm
-            # install leaving a newer store than corepack's).
-            echo
-            gum style --foreground $p_cyan --bold "⚙  OpenCode"
-            __nixx_step "Updating opencode plugin" --timeout 120 \
-                "pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
+                # Clean up success logfiles (keep failure logs for the summary)
+                for r in $__nixx_results
+                    set -l parts (string split "|" $r)
+                    if test "$parts[2]" = ok -a -n "$parts[4]" -a -f "$parts[4]"
+                        rm -f "$parts[4]"
+                    end
+                end
+            end
     end
 
     # --- summary ---
@@ -457,11 +316,14 @@ function nixx
 
     set -l fail_count 0
     set -l pass_count 0
+    set -l blocked_count 0
     set -l failed_logs
     for r in $__nixx_results
         set -l parts (string split "|" $r)
         if test "$parts[2]" = ok
             set pass_count (math $pass_count + 1)
+        else if test "$parts[2]" = blocked
+            set blocked_count (math $blocked_count + 1)
         else
             set fail_count (math $fail_count + 1)
             if test -n "$parts[4]" -a -f "$parts[4]"
@@ -470,7 +332,7 @@ function nixx
         end
     end
 
-    set -l total_count (math $pass_count + $fail_count)
+    set -l total_count (math $pass_count + $fail_count + $blocked_count)
 
     # build summary detail line
     set -l detail_parts
@@ -479,6 +341,9 @@ function nixx
     end
     if test $fail_count -gt 0
         set -a detail_parts "$fail_count step(s) failed"
+    end
+    if test $blocked_count -gt 0
+        set -a detail_parts "$blocked_count step(s) blocked"
     end
     set -l detail_str (string join " · " $detail_parts)
 
@@ -515,13 +380,15 @@ function nixx
     echo
 
     # --- cleanup ---
+    # kill sudo keep-alive
+    if test $__nixx_sudo_keep_pid -gt 0
+        kill $__nixx_sudo_keep_pid 2>/dev/null
+    end
     set -e __nixx_verbose
     set -e __nixx_results
     set -e __nixx_brew_upgraded_count
+    set -e __nixx_sudo_keep_pid
     functions -e __nixx_step
-    functions -e __nixx_fmt_time
-    functions -e __nixx_spin_with_hint
-    functions -e __nixx_brew_upgrade
 
     # --- drift check (full update only) ---
     switch "$mode"
@@ -530,8 +397,19 @@ function nixx
 
             # --- restore custom LaunchAgents (full update only) ---
             # Ensures any *.plist in ~/.config/scripts/*/ is loaded.
+            # Stderr is captured to a temp file so _nixx_heal can diagnose
+            # fish runtime errors (e.g. test syntax errors) without catching
+            # gum's terminal control output on stdout.
             if type -q scripts-restore
-                scripts-restore
+                set -l sr_stderr /tmp/nixx-scripts-restore-(date +%s).err
+                scripts-restore 2>$sr_stderr
+                if test -s $sr_stderr
+                    and grep -q '\.fish.*(line [0-9]\+):' $sr_stderr 2>/dev/null
+                    _nixx_heal "scripts-restore error" \
+                        (cat $sr_stderr | string collect) \
+                        ~/.config/fish/functions/scripts-restore.fish
+                end
+                rm -f $sr_stderr
             end
 
             # --- publish public dotfiles (full update only) ---
@@ -539,6 +417,22 @@ function nixx
             # Shows a diff + confirms before pushing; secret-scan gates every repo.
             if type -q publish-dots
                 publish-dots
+            end
+
+            # --- self-heal failed steps ---
+            # After all sub-commands finish, offer to heal any steps that
+            # failed during the update. Uses the captured logfiles.
+            if test $fail_count -gt 0; and type -q _nixx_heal
+                for entry in $failed_logs
+                    set -l parts (string split ": " $entry)
+                    set -l label $parts[1]
+                    set -l logfile $parts[2]
+                    if test -f "$logfile"
+                        _nixx_heal "$label failure" \
+                            (cat $logfile | string collect) \
+                            ~/.config/fish/functions/nixx.fish
+                    end
+                end
             end
     end
 

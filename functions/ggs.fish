@@ -6,7 +6,7 @@ function ggs
     # ──────────────────────────────────────────────────────
 
     if not type -q gum
-        echo "Error: gum is not installed. Install with 'brew install gum'"
+        echo "Error: gum is not installed. add 'gum' to nix/modules/apps.nix then run nixx l"
         return 1
     end
 

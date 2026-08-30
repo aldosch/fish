@@ -1,7 +1,9 @@
 function fish_right_prompt
+    _aldo_dracula_apply_palette
+
     set -l cmd_status $status
     if test $cmd_status -ne 0
-        echo -n (set_color red)"✘ $cmd_status"
+        echo -n (set_color $p_red)"✘ $cmd_status"
     end
 
     if not command -sq git
@@ -116,45 +118,45 @@ function fish_right_prompt
 
     if test -n "$branch"
         if test $branch_detached -ne 0
-            set_color brmagenta
+            set_color $p_purple
         else
-            set_color green
+            set_color $p_green
         end
         echo -n " $branch"
     end
     if test -n "$commit"
-        echo -n ' '(set_color yellow)"$commit"
+        echo -n ' '(set_color $p_yellow)"$commit"
     end
     if test -n "$action"
         set_color normal
-        echo -n (set_color white)':'(set_color -o brred)"$action"
+        echo -n (set_color $p_fg)':'(set_color -o $p_red)"$action"
     end
     if test $status_ahead -ne 0
-        echo -n ' '(set_color brmagenta)'⬆'
+        echo -n ' '(set_color $p_purple)'⬆'
     end
     if test $status_behind -ne 0
-        echo -n ' '(set_color brmagenta)'⬇'
+        echo -n ' '(set_color $p_purple)'⬇'
     end
     if test $status_stashed -ne 0
-        echo -n ' '(set_color cyan)'✭'
+        echo -n ' '(set_color $p_cyan)'✭'
     end
     if test $status_added -ne 0
-        echo -n ' '(set_color green)'✚'
+        echo -n ' '(set_color $p_green)'✚'
     end
     if test $status_deleted -ne 0
-        echo -n ' '(set_color red)'✖'
+        echo -n ' '(set_color $p_red)'✖'
     end
     if test $status_modified -ne 0
-        echo -n ' '(set_color blue)'✱'
+        echo -n ' '(set_color $p_cyan)'✱'
     end
     if test $status_renamed -ne 0
-        echo -n ' '(set_color magenta)'➜'
+        echo -n ' '(set_color $p_pink)'➜'
     end
     if test $status_unmerged -ne 0
-        echo -n ' '(set_color yellow)'═'
+        echo -n ' '(set_color $p_yellow)'═'
     end
     if test $status_untracked -ne 0
-        echo -n ' '(set_color white)'◼'
+        echo -n ' '(set_color $p_fg)'◼'
     end
 
     set_color normal

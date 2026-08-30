@@ -117,7 +117,7 @@ function brew --wraps brew
         end
 
         # confirm
-        _brew_msg info "Undeclared $surface_desc(s): "(string join ", " $undeclared)
+        _pkg_msg info "Undeclared $surface_desc(s): "(string join ", " $undeclared)
         set -l do_add 0
         if _brew_confirm "Add to apps.nix ($list_name)?  (No = temporary, cleaned by next nixx)"
             set do_add 1
@@ -143,13 +143,13 @@ function brew --wraps brew
                 and git -C ~/.config commit -m "brew: add "(string join ", " $added) -- nix/modules/apps.nix
                 and set committed 1
                 if test $committed -eq 1
-                    _brew_msg ok "Added to apps.nix ($list_name): "(string join ", " $added)" (committed)"
+                    _pkg_msg ok "Added to apps.nix ($list_name): "(string join ", " $added)" (committed)"
                 else
-                    _brew_msg warn "Added to apps.nix ($list_name): "(string join ", " $added)" (commit failed — staged, commit manually)"
+                    _pkg_msg warn "Added to apps.nix ($list_name): "(string join ", " $added)" (commit failed — staged, commit manually)"
                 end
             end
         else
-            _brew_msg warn "Temporary install (cleanup = zap will remove on next nixx apply)"
+            _pkg_msg warn "Temporary install (cleanup = zap will remove on next nixx apply)"
         end
 
     else
@@ -173,13 +173,13 @@ function brew --wraps brew
                 return $rc
             end
             if test (count $in_common) -gt 0
-                _brew_msg warn "In common list (affects both machines): "(string join ", " $in_common)" — edit apps.nix manually to remove"
+                _pkg_msg warn "In common list (affects both machines): "(string join ", " $in_common)" — edit apps.nix manually to remove"
             end
             return 0
         end
 
         # confirm removal from host-specific list
-        _brew_msg info "In $list_name: "(string join ", " $in_host_list)
+        _pkg_msg info "In $list_name: "(string join ", " $in_host_list)
         set -l do_remove 0
         if _brew_confirm "Remove from apps.nix ($list_name)?  (No = keep declared, reinstalled by next nixx)"
             set do_remove 1
@@ -205,43 +205,17 @@ function brew --wraps brew
                 and git -C ~/.config commit -m "brew: remove "(string join ", " $removed) -- nix/modules/apps.nix
                 and set committed 1
                 if test $committed -eq 1
-                    _brew_msg ok "Removed from apps.nix ($list_name): "(string join ", " $removed)" (committed)"
+                    _pkg_msg ok "Removed from apps.nix ($list_name): "(string join ", " $removed)" (committed)"
                 else
-                    _brew_msg warn "Removed from apps.nix ($list_name): "(string join ", " $removed)" (commit failed — modified, commit manually)"
+                    _pkg_msg warn "Removed from apps.nix ($list_name): "(string join ", " $removed)" (commit failed — modified, commit manually)"
                 end
             end
         else
-            _brew_msg warn "Still declared in apps.nix — will be reinstalled on next nixx apply"
+            _pkg_msg warn "Still declared in apps.nix — will be reinstalled on next nixx apply"
         end
     end
 
     return 0
-end
-
-# --- output helper (plain text fallback if gum not available) ---
-function _brew_msg
-    set -l kind $argv[1]
-    set -l text $argv[2..-1]
-    set -l symbol "  ·"
-    set -l color $p_muted
-    switch $kind
-        case ok
-            set symbol "  ✓"
-            set color $p_green
-        case warn
-            set symbol "  ▸"
-            set color $p_orange
-        case info
-            set symbol "  →"
-            set color $p_cyan
-    end
-    if type -q gum
-        gum join --horizontal \
-            (gum style --foreground $color "$symbol") \
-            (gum style --foreground $p_fg " $text")
-    else
-        echo "$symbol $text"
-    end
 end
 
 # --- confirm helper (read fallback if gum not available) ---

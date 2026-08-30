@@ -1,12 +1,28 @@
 function pjson --description 'Format JSON files with jq'
     if not type -q gum
-        echo "Error: gum is not installed. Install with 'brew install gum'"
+        echo "Error: gum is not installed. add 'gum' to nix/modules/apps.nix then run nixx l"
         return 1
+    end
+
+    _aldo_dracula_apply_palette
+
+    function _pjson_human_size
+        set -l bytes $argv[1]
+        if test $bytes -ge 1073741824
+            printf "%.1f GB" (math $bytes / 1073741824)
+        else if test $bytes -ge 1048576
+            printf "%.1f MB" (math $bytes / 1048576)
+        else if test $bytes -ge 1024
+            printf "%.1f KB" (math $bytes / 1024)
+        else
+            printf "%d B" $bytes
+        end
     end
 
     set -l files *.json
     if test -z "$files" -o ! -f "$files[1]"
-        gum style --foreground 220 "⚠ No JSON files found in current directory"
+        gum style --foreground $p_yellow "⚠ No JSON files found in current directory"
+        functions -e _pjson_human_size
         return 1
     end
 
@@ -18,7 +34,7 @@ function pjson --description 'Format JSON files with jq'
 
     for file in $files
         set -l size (command du -h "$file" | cut -f1 | string trim)
-        gum style --foreground 245 "  formatting $file ($size)..."
+        gum style --foreground $p_muted "  formatting $file ($size)..."
 
         set -l before (command stat -f%z "$file")
 
@@ -37,7 +53,7 @@ function pjson --description 'Format JSON files with jq'
     echo
 
     if test -n "$formatted"
-        gum style --foreground 40 --bold "✓ formatted: (count $formatted) file(s)"
+        gum style --foreground $p_green --bold "✓ formatted: (count $formatted) file(s)"
         set -l i 0
         for f in $formatted
             set i (math $i + 1)
@@ -47,17 +63,17 @@ function pjson --description 'Format JSON files with jq'
 
             if test $diff -eq 0
                 gum join --horizontal \
-                    (gum style --foreground 48 "  $f ") \
-                    (gum style --foreground 245 "(no change)")
+                    (gum style --foreground $p_green2 "  $f ") \
+                    (gum style --foreground $p_muted "(no change)")
             else if test $diff -gt 0
                 gum join --horizontal \
-                    (gum style --foreground 48 "  $f ") \
-                    (gum style --foreground 220 "+"(_pjson_human_size $diff))
+                    (gum style --foreground $p_green2 "  $f ") \
+                    (gum style --foreground $p_yellow "+"(_pjson_human_size $diff))
             else
                 set -l abs (math -- -1 \* $diff)
                 gum join --horizontal \
-                    (gum style --foreground 48 "  $f ") \
-                    (gum style --foreground 45 "-"(_pjson_human_size $abs))
+                    (gum style --foreground $p_green2 "  $f ") \
+                    (gum style --foreground $p_cyan "-"(_pjson_human_size $abs))
             end
         end
     end
@@ -66,22 +82,11 @@ function pjson --description 'Format JSON files with jq'
         if test -n "$formatted"
             echo
         end
-        gum style --foreground 203 --bold "✗ failed:"
+        gum style --foreground $p_red --bold "✗ failed:"
         for f in $failed
-            gum style --foreground 210 "  $f"
+            gum style --foreground $p_red2 "  $f"
         end
     end
-end
 
-function _pjson_human_size --description 'Convert bytes to human-readable size'
-    set -l bytes $argv[1]
-    if test $bytes -ge 1073741824
-        printf "%.1f GB" (math $bytes / 1073741824)
-    else if test $bytes -ge 1048576
-        printf "%.1f MB" (math $bytes / 1048576)
-    else if test $bytes -ge 1024
-        printf "%.1f KB" (math $bytes / 1024)
-    else
-        printf "%d B" $bytes
-    end
+    functions -e _pjson_human_size
 end

@@ -19,7 +19,7 @@
 
 function opencode-restore
     if not type -q gum
-        echo "Error: gum is not installed. Install with 'brew install gum'"
+        echo "Error: gum is not installed. add 'gum' to nix/modules/apps.nix then run nixx l"
         return 1
     end
 
@@ -104,31 +104,14 @@ function opencode-restore
     fish -c "pnpm install --dir $dir $frozen_flag >$tmplog 2>&1; echo \$status >$exitfile" &
     set -l bg_pid $last_pid
 
-    # spinner while running
-    set -l frames '⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏'
-    set -l n_frames (count $frames)
-    set -l i 1
-    printf '\033[?25l'
-    while not test -f $exitfile
-        set -l frame $frames[$i]
-        printf '\r\033[K%s' (gum join --horizontal \
-            (gum style --foreground $p_purple " $frame") \
-            (gum style --foreground $p_muted "  $label..."))
-        set i (math "($i % $n_frames) + 1")
-        sleep 0.1
-    end
-    printf '\r\033[K'
-    printf '\033[?25h'
+    gum spin --spinner dot --spinner.foreground $p_purple --title.foreground $p_muted \
+        --title "  $label..." -- fish -c "while not test -f $exitfile; sleep 0.2; end"
 
     wait $bg_pid 2>/dev/null
     set -l exit_code (string trim (cat $exitfile 2>/dev/null; or echo 1))
     set -l t_end (date +%s)
     set -l elapsed (math "$t_end - $t_start")
-    if test $elapsed -lt 60
-        set elapsed_str "$elapsed"s
-    else
-        set elapsed_str (math "floor($elapsed / 60)")m(math "$elapsed % 60")s
-    end
+    set -l elapsed_str (__nixx_fmt_time $elapsed)
 
     if test "$exit_code" = "0"
         # read installed plugin version for the summary line

@@ -18,9 +18,7 @@
 #   extra packages       -> notice only         (cleanup=zap on next apply)
 #   git dirty / unpushed -> notice only
 #
-# The funny MOTD message is generated via the Vercel AI Gateway (cheap model),
-# with a fallback model and finally a hardcoded rotating message if the
-# gateway is unreachable or the key is missing.
+# The MOTD message is a simple hardcoded string, rotated from a small set.
 
 function dotfiles-health
     _aldo_dracula_apply_palette
@@ -218,7 +216,22 @@ function dotfiles-health
     end
 
     # -------------------------------------------------------------------------
-    # Generate funny message via AI Gateway
+    # Check: heal backlog (documented issues awaiting fix)
+    # -------------------------------------------------------------------------
+    function __dot_check_heal_backlog
+        set -l backlog ~/.local/state/dotfiles/heal-backlog.md
+        if not test -f "$backlog"; or not test -s "$backlog"
+            return
+        end
+        set -l count (grep -c '^## ' "$backlog" 2>/dev/null)
+        if test "$count" -gt 0
+            __dot_add "heal backlog" "documented" "heal backlog" \
+                "$count documented issue(s) awaiting fix (dot heal)" 0
+        end
+    end
+
+    # -------------------------------------------------------------------------
+    # Pick a simple MOTD message
     # -------------------------------------------------------------------------
     function __dot_generate_message
         set -l item_count (count $__dot_items)
@@ -227,105 +240,13 @@ function dotfiles-health
             return
         end
 
-        # Build items JSON array from the individual JSON objects
-        set -l items_json (printf '%s\n' $__dot_items | jq -s '.')
-
-        # Try to get AI gateway key from env or keychain
-        set -l gw_key $AI_GATEWAY_API_KEY
-        if test -z "$gw_key"
-            set -l blob (security find-generic-password -a $USER -s "aldo-env-secrets" -w 2>/dev/null)
-            if test $status -eq 0 -a -n "$blob"
-                set gw_key (echo $blob | jq -r '.AI_GATEWAY_API_KEY // empty' 2>/dev/null)
-            end
-        end
-
-        if test -z "$gw_key"
-            __dot_log "message: no AI gateway key, using fallback"
-            echo (__dot_fallback_msg)
-            return
-        end
-
-        # System prompt tuned to Aldo's Slack voice with Justin
-        set -l sys "You write one-line MOTD messages for a developer's terminal. Write EXACTLY in this voice, like texting a work bro on slack: lowercase, short, dry, understated funny. Use these words naturally when they fit: kinda, lol, lmao, tbh, nws, btw, pretty, literally, wild, unhinged. SFW only, nothing stronger than damn or hell. No em dashes. Max 80 chars. Don't explain what's wrong technically, just vibe about it. Be funny but not try-hard. Output ONLY the message text, no quotes, no prefix, no run: dotfix."
-
-        # jq template for building the request payload (reused for both models)
-        set -l jq_template '{model:$model,messages:[{role:"system",content:$sys},{role:"user",content:("Found "+($count|tostring)+" issue(s) on this machine:\n"+($items|map(if .auto_fixed then "- \(.summary) (auto-fixed)" else "- \(.summary)" end)|join("\n"))+"\n\nWrite a one-line funny message about this.")}],max_tokens:100,temperature:0.85}'
-
-        # Try primary model
-        set -l req (mktemp)
-        jq -n \
-            --arg model "openai/gpt-4o-mini" \
-            --arg sys "$sys" \
-            --argjson count $item_count \
-            --argjson items "$items_json" \
-            "$jq_template" >$req
-
-        set -l resp (curl -s --max-time 10 \
-            -H "Authorization: Bearer $gw_key" \
-            -H "Content-Type: application/json" \
-            -d @$req \
-            https://ai-gateway.vercel.sh/v1/chat/completions 2>/dev/null)
-        rm -f $req
-
-        set -l msg (echo $resp | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-        if test -n "$msg"
-            set msg (string trim -- $msg)
-            set msg (string replace -r '^"' '' -- $msg)
-            set msg (string replace -r '"$' '' -- $msg)
-            set msg (string trim -- (echo $msg | tr '\n' ' '))
-            if test (string length -- $msg) -gt 100
-                set msg (string sub -l 100 -- $msg)
-            end
-            __dot_log "message: generated with openai/gpt-4o-mini"
-            echo $msg
-            return
-        end
-        __dot_log "message: primary model returned empty, trying fallback"
-
-        # Try fallback model
-        set -l req2 (mktemp)
-        jq -n \
-            --arg model "google/gemini-2.0-flash-exp" \
-            --arg sys "$sys" \
-            --argjson count $item_count \
-            --argjson items "$items_json" \
-            "$jq_template" >$req2
-
-        set -l resp2 (curl -s --max-time 10 \
-            -H "Authorization: Bearer $gw_key" \
-            -H "Content-Type: application/json" \
-            -d @$req2 \
-            https://ai-gateway.vercel.sh/v1/chat/completions 2>/dev/null)
-        rm -f $req2
-
-        set -l msg2 (echo $resp2 | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-        if test -n "$msg2"
-            set msg2 (string trim -- $msg2)
-            set msg2 (string replace -r '^"' '' -- $msg2)
-            set msg2 (string replace -r '"$' '' -- $msg2)
-            set msg2 (string trim -- (echo $msg2 | tr '\n' ' '))
-            if test (string length -- $msg2) -gt 100
-                set msg2 (string sub -l 100 -- $msg2)
-            end
-            __dot_log "message: generated with google/gemini-2.0-flash-exp"
-            echo $msg2
-            return
-        end
-        __dot_log "message: all models failed, using hardcoded fallback"
-        echo (__dot_fallback_msg)
-    end
-
-    # Hardcoded fallback messages in Aldo's voice
-    function __dot_fallback_msg
         set -l msgs \
-            "ur dotfiles are kinda acting up" \
-            "some stuff drifted, nws but worth a look" \
-            "config is doing its own thing again" \
-            "couple things need attention tbh" \
-            "hey so some stuff happened while u were away" \
-            "dotfiles are being a bit unhinged rn" \
-            "pretty wild what drifted since last check" \
-            "config repo is feeling a little neglected lol"
+            "stuff needs attention" \
+            "config drifted a bit" \
+            "some things to fix" \
+            "needs a look tbh" \
+            "couple things drifted" \
+            "config needs a check"
         set -l idx (random 1 (count $msgs))
         echo $msgs[$idx]
     end
@@ -338,6 +259,7 @@ function dotfiles-health
     __dot_check_opencode
     __dot_check_ghostty
     __dot_check_git
+    __dot_check_heal_backlog
 
     # -------------------------------------------------------------------------
     # Generate message
@@ -407,6 +329,6 @@ function dotfiles-health
     functions -e __dot_check_opencode
     functions -e __dot_check_ghostty
     functions -e __dot_check_git
+    functions -e __dot_check_heal_backlog
     functions -e __dot_generate_message
-    functions -e __dot_fallback_msg
 end

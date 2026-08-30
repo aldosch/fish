@@ -16,6 +16,7 @@ end
 function t --description "Attach or create tmux session"
     set name (count $argv) > /dev/null; and set s $argv[1]; or set s (__t_name_from_pwd)
     tmux attach -t "$s" 2>/dev/null; or tmux new -s "$s"
+    functions -e __t_name_from_pwd
 end
 
 function tl --description "List tmux sessions (clean)"

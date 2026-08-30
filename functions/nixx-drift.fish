@@ -231,7 +231,7 @@ function nixx-drift
     # -------------------------------------------------------------------------
 
     function __drift_brew
-        __drift_section "Homebrew"
+        __drift_section "brew"
 
         set -l hn $hostname
         set -l nix_log /tmp/nixx-drift-nix-eval-(date +%s).log
@@ -308,6 +308,14 @@ function nixx-drift
             set leaves_brews_normalized $leaves_brews_normalized (string replace -ra '^.+/' '' $pkg)
         end
 
+        # Normalize cask names by stripping tap prefixes, same as brews above.
+        # e.g. "rauchg/typing-stats/typing-stats" → "typing-stats"
+        # `brew list --cask` returns short names; nix eval returns full tap-prefixed names.
+        set -l declared_casks_normalized
+        for pkg in $declared_casks
+            set declared_casks_normalized $declared_casks_normalized (string replace -ra '^.+/' '' $pkg)
+        end
+
         set -l brew_found_drift 0
 
         # --- brews: extra (leaf-installed but not declared) ---
@@ -364,7 +372,7 @@ function nixx-drift
 
         # --- casks: extra ---
         for pkg in $installed_casks
-            if not contains -- $pkg $declared_casks
+            if not contains -- $pkg $declared_casks_normalized
                 set brew_found_drift 1
                 __drift_item extra "brew cask" $pkg
                 switch "$__drift_action"
@@ -389,8 +397,10 @@ function nixx-drift
         end
 
         # --- casks: missing ---
-        for pkg in $declared_casks
-            if not contains -- $pkg $installed_casks
+        for i in (seq (count $declared_casks))
+            set -l pkg $declared_casks[$i]
+            set -l pkg_short $declared_casks_normalized[$i]
+            if not contains -- $pkg_short $installed_casks
                 set brew_found_drift 1
                 __drift_item missing "brew cask" $pkg "declared in apps.nix but not installed"
                 switch "$__drift_action"
@@ -690,7 +700,7 @@ function nixx-drift
     end
 
     # -------------------------------------------------------------------------
-    # Surface 7: opencode MCP commands (pnpx → npx + functional smoke test)
+    # Surface 7: opencode MCP commands (pnpx → npx + skills binary smoke test)
     # -------------------------------------------------------------------------
     #
     # pnpm 11 switched `pnpm dlx` to a global virtual store. ESM packages
@@ -702,13 +712,11 @@ function nixx-drift
     # customer dir like ~/vercel/customers/sbs and every pnpx-based MCP fails
     # silently with "Connection closed".
     #
-    # We already migrated opencode.json to `npx -y`, so this check guards
-    # against regressions: (A) someone adding a new local MCP with `pnpx`, and
-    # (B) a future pnpm/corepack upgrade re-breaking `pnpx` so the `pnpx skills`
-    # step in nixx.fish also needs attention.
+    # We already migrated opencode.json to `npx -y`, so this surface guards
+    # against regressions (someone adding a new local MCP with `pnpx`).
 
     function __drift_mcp_commands
-        __drift_section "opencode MCP commands"
+        __drift_section "opencode mcp commands"
 
         set -l cfg $__drift_config_dir/opencode/opencode.json
         if not test -f "$cfg"
@@ -781,34 +789,6 @@ function nixx-drift
             end
         end
 
-        # --- Part B: functional smoke test — does `pnpx` still work at all? ---
-        # `pnpx skills --help` is a fast CJS smoke test (skills is already
-        # installed globally, so no download). If even this fails, pnpm dlx is
-        # fundamentally broken and the nixx.fish `pnpx skills update` step will
-        # also fail. This catches a wider pnpm regression than the config scan.
-        set -l smoke_log /tmp/nixx-drift-pnpx-smoke-(date +%s).log
-        __drift_run_timed 20 $smoke_log "cd /tmp && command pnpm dlx skills --help"
-        set -l smoke_rc $status
-        set -l smoke_broken 0
-        if test $smoke_rc -ne 0
-            set smoke_broken 1
-            set found_drift 1
-            gum join --horizontal \
-                (gum style --foreground $p_red "  ✗ pnpx broken") \
-                (gum style --foreground $p_fg " pnpm dlx smoke test failed (rc=$smoke_rc)")
-            if test -s $smoke_log
-                set -l err (grep -iE "ERR_MODULE_NOT_FOUND|Cannot find module|links/" $smoke_log 2>/dev/null | head -1)
-                if test -n "$err"
-                    gum style --foreground $p_muted --faint "    $err"
-                end
-                gum style --foreground $p_muted --faint "    log: $smoke_log"
-            end
-            gum style --foreground $p_muted \
-                "    → nixx.fish uses pnpx for skills update; if this fails, investigate pnpm/corepack."
-        else
-            rm -f $smoke_log
-        end
-
         if test $found_drift -eq 0
             gum join --horizontal \
                 (gum style --foreground $p_green "  ✓") \
@@ -831,6 +811,59 @@ function nixx-drift
     #   1. In the nix module, write the config via pkgs.writeText and expose
     #      it with environment.etc."<name>-expected".source = <file>
     #   2. Add a __drift_generated_file call below with the expected/actual paths
+
+    # Generate a plain-language hint explaining what Migrate vs Discard means
+    # for a specific diff. Uses a cheap AI Gateway model (gpt-4o-mini). Prints
+    # nothing on any failure (no key, API down, empty response) so the caller
+    # falls back seamlessly to the generic gum choose header.
+    # Usage: __drift_ai_hint <label> <diff_line1> <diff_line2> ...
+    function __drift_ai_hint
+        set -l label $argv[1]
+        set -l diff_lines $argv[2..-1]
+
+        set -l gw_key $AI_GATEWAY_API_KEY
+        if test -z "$gw_key"
+            set gw_key (secret-get AI_GATEWAY_API_KEY)
+        end
+
+        if test -z "$gw_key"
+            return
+        end
+
+        set -l sys "You explain config drift resolution in plain language. Given a unified diff for a config file (lines starting with - are the nix-generated original, lines starting with + are the user manual edits), output exactly 3 lines:\nLine 1: Changed: <what the user edited, in plain language>\nLine 2: Migrate = keep <new value> (update nix source to match)\nLine 3: Discard = revert to <old value> (undo your edit)\nIf multiple things changed, combine on line 1 and use your edits on lines 2-3. No em dashes. No markdown. No preamble. Output only the 3 lines."
+
+        set -l req_diff (mktemp)
+        printf '%s\n' $diff_lines >$req_diff
+        set -l req (mktemp)
+        jq -n \
+            --arg model "openai/gpt-4o-mini" \
+            --arg sys "$sys" \
+            --arg label "$label" \
+            --rawfile diff "$req_diff" \
+            '{model:$model,messages:[{role:"system",content:$sys},{role:"user",content:("Diff for "+$label+":\n"+$diff)}],max_tokens:200,temperature:0.3}' >$req
+        rm -f $req_diff
+
+        set -l resp (curl -s --max-time 8 \
+            -H "Authorization: Bearer $gw_key" \
+            -H "Content-Type: application/json" \
+            -d @$req \
+            https://ai-gateway.vercel.sh/v1/chat/completions 2>/dev/null)
+        rm -f $req
+
+        set -l hint (echo $resp | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        if test (count $hint) -eq 0
+            return
+        end
+
+        echo
+        for line in $hint
+            set -l trimmed (string trim -- $line)
+            if test -n "$trimmed"
+                gum style --foreground $p_cyan "    $trimmed"
+            end
+        end
+        echo
+    end
 
     # Compare a single generated file against its expected content.
     # Usage: __drift_generated_file <label> <expected> <actual> <source>
@@ -895,6 +928,8 @@ function nixx-drift
             gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
             return 1
         end
+
+        __drift_ai_hint "$label" $diff_output
 
         set -l choice (gum choose \
             --cursor.foreground $p_purple \
