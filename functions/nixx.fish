@@ -6,13 +6,18 @@
 #                  the timestamp every 60 s so it never expires mid-run.
 #                  The skills step uses skills-sync, which fetches all repo
 #                  pushed_at timestamps in parallel and only updates changed skills.
-#  - nixx l      - build and apply using current lock file (no updates)
+#  - nixx l      - build and apply using current lock file (no updates).
+#                  Uses the same DAG scheduler: build → apply → (gc ‖ brew cleanup).
+#                  If build fails, apply and cleanup are blocked, not run on stale state.
 #  - nixx locked - same as nixx l
-#  - nixx b      - build only (no apply, no updates)
-#  - nixx a      - apply only (assumes already built)
+#  - nixx b      - build only (no apply, no updates). Single step, no DAG.
+#  - nixx a      - apply only (assumes already built).
+#                  Uses the DAG scheduler: apply → (gc ‖ brew cleanup).
 #
 # Flags:
-#  -v / --verbose  - sequential execution with full command output (no parallelism)
+#  -v / --verbose  - sequential execution with full command output (no parallelism).
+#                    Dependency-aware: if a step fails, its dependents are skipped
+#                    and marked blocked instead of running against stale state.
 
 
 function nixx
@@ -223,6 +228,13 @@ function nixx
     set -l ea (string join " " $extra_args)
 
     # --- execute based on mode ---
+    # Modes a, l, and full build a task list in DAG format and share the
+    # dispatch below (verbose-sequential with dependency-aware skipping, or
+    # parallel via __nixx_run_dag). Mode b is a single step with no DAG.
+    #
+    # Task format: section|task_id|label|timeout|dep_ids|hint|command
+    set -l tasks
+
     switch "$mode"
         case b
             echo
@@ -231,33 +243,18 @@ function nixx
                 "cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
 
         case a
-            echo
-            gum style --foreground $p_cyan --bold "⚙  nix apply"
-            __nixx_step "Applying nix configuration" \
-                "cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
-            __nixx_step "Collecting nix garbage" \
-                "nix-collect-garbage -d"
-            __nixx_step "Cleaning up homebrew" \
-                "brew cleanup"
+            set -a tasks "nix|nix-apply|Applying nix configuration|300|||cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
+            set -a tasks "cleanup|nix-gc|Collecting nix garbage|300|nix-apply||nix-collect-garbage -d"
+            set -a tasks "cleanup|brew-cleanup|Cleaning up homebrew|300|nix-apply||brew cleanup"
 
         case l locked
-            echo
-            gum style --foreground $p_cyan --bold "⚙  nix build + apply (locked)"
-            __nixx_step "Building nix configuration" \
-                "cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
-            __nixx_step "Applying nix configuration" \
-                "cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
-            __nixx_step "Collecting nix garbage" \
-                "nix-collect-garbage -d"
-            __nixx_step "Cleaning up homebrew" \
-                "brew cleanup"
+            set -a tasks "nix|nix-build|Building nix configuration|300|||cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
+            set -a tasks "nix|nix-apply|Applying nix configuration|300|nix-build||cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
+            set -a tasks "cleanup|nix-gc|Collecting nix garbage|300|nix-apply||nix-collect-garbage -d"
+            set -a tasks "cleanup|brew-cleanup|Cleaning up homebrew|300|nix-apply||brew cleanup"
 
         case '*'
-            # Full update: parallel DAG (non-verbose) or sequential (verbose)
-            #
-            # Single task table in DAG format: section|task_id|label|timeout|dep_ids|hint|command
-            # The verbose path iterates it sequentially; the DAG path passes it to __nixx_run_dag.
-            set -l tasks
+            # Full update: flake, build, apply, brew, nvim, skills, etc.
             set -a tasks "nix|nix-flake|Updating nix flake|300|||cd ~/.config/nix && nix flake update"
             set -a tasks "nix|nix-build|Building nix configuration|300|nix-flake||cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
             set -a tasks "nix|nix-apply|Applying nix configuration|300|nix-build||cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
@@ -274,37 +271,76 @@ function nixx
             set -a tasks "node|node-pnpm-globals|Updating pnpm globals|120|node-corepack-prepare||pnpm update -g"
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
             set -a tasks "opencode|opencode-plugin|Updating opencode plugin|120|node-pnpm-globals||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
+    end
 
-            if test "$__nixx_verbose" -eq 1
-                # --- verbose: sequential with full output ---
-                set -l cur_section ""
-                for task in $tasks
-                    set -l parts (string split "|" $task -m 6)
-                    set -l section $parts[1]
-                    set -l label $parts[3]
-                    set -l timeout $parts[4]
-                    set -l cmd $parts[7]
-                    if test "$section" != "$cur_section"
-                        echo
-                        gum style --foreground $p_cyan --bold "⚙  $section"
-                        set cur_section $section
+    # --- shared dispatch: modes with a task list (a, l, full) ---
+    if test (count $tasks) -gt 0
+        if test "$__nixx_verbose" -eq 1
+            # --- verbose: sequential with full output, dependency-aware ---
+            # Tasks are listed in topological order (deps before dependents).
+            # If a dependency failed, skip dependents and mark them blocked
+            # instead of running them against stale state.
+            set -l v_ids
+            set -l v_statuses
+            set -l cur_section ""
+            for task in $tasks
+                set -l parts (string split "|" $task -m 6)
+                set -l section $parts[1]
+                set -l task_id $parts[2]
+                set -l label $parts[3]
+                set -l timeout $parts[4]
+                set -l dep_ids $parts[5]
+                set -l cmd $parts[7]
+
+                # check dependencies against completed tasks
+                set -l dep_failed 0
+                if test -n "$dep_ids"
+                    for dep_id in (string split " " -- $dep_ids)
+                        for j in (seq (count $v_ids))
+                            if test "$v_ids[$j]" = "$dep_id"
+                                if test "$v_statuses[$j]" != ok
+                                    set dep_failed 1
+                                end
+                                break
+                            end
+                        end
                     end
-                    __nixx_step "$label" --timeout $timeout "$cmd"
                 end
-            else
-                # --- parallel: DAG scheduler ---
-                echo
-                __nixx_run_dag $tasks
-                echo
 
-                # Clean up success logfiles (keep failure logs for the summary)
-                for r in $__nixx_results
-                    set -l parts (string split "|" $r)
-                    if test "$parts[2]" = ok -a -n "$parts[4]" -a -f "$parts[4]"
-                        rm -f "$parts[4]"
-                    end
+                if test $dep_failed -eq 1
+                    set -g __nixx_results $__nixx_results "$label|blocked|0s|"
+                    set -a v_ids $task_id
+                    set -a v_statuses blocked
+                    continue
+                end
+
+                if test "$section" != "$cur_section"
+                    echo
+                    gum style --foreground $p_cyan --bold "⚙  $section"
+                    set cur_section $section
+                end
+                __nixx_step "$label" --timeout $timeout "$cmd"
+
+                # record this task's status for dependent checks
+                set -l last $__nixx_results[-1]
+                set -l rp (string split "|" $last)
+                set -a v_ids $task_id
+                set -a v_statuses $rp[2]
+            end
+        else
+            # --- parallel: DAG scheduler ---
+            echo
+            __nixx_run_dag $tasks
+            echo
+
+            # Clean up success logfiles (keep failure logs for the summary)
+            for r in $__nixx_results
+                set -l parts (string split "|" $r)
+                if test "$parts[2]" = ok -a -n "$parts[4]" -a -f "$parts[4]"
+                    rm -f "$parts[4]"
                 end
             end
+        end
     end
 
     # --- summary ---
@@ -390,12 +426,25 @@ function nixx
     set -e __nixx_sudo_keep_pid
     functions -e __nixx_step
 
-    # --- drift check (full update only) ---
+    # --- publish public dotfiles (any apply-bearing mode) ---
+    # Auto-approves (-y): no per-repo confirmation, no commit-message prompt.
+    # Runs after full update, locked build+apply, and apply-only. Skipped for
+    # build-only (nixx b): nothing was applied, so there's nothing to sync.
+    # The secret scan inside publish-dots remains a hard gate; if it trips,
+    # _nixx_heal fires interactively so a leak is never silently pushed.
+    switch "$mode"
+        case '' a l locked
+            if type -q publish-dots
+                publish-dots -y
+            end
+    end
+
+    # --- drift check, LaunchAgent restore, self-heal ---
     switch "$mode"
         case '' '*'
             nixx-drift
 
-            # --- restore custom LaunchAgents (full update only) ---
+            # --- restore custom LaunchAgents ---
             # Ensures any *.plist in ~/.config/scripts/*/ is loaded.
             # Stderr is captured to a temp file so _nixx_heal can diagnose
             # fish runtime errors (e.g. test syntax errors) without catching
@@ -410,13 +459,6 @@ function nixx
                         ~/.config/fish/functions/scripts-restore.fish
                 end
                 rm -f $sr_stderr
-            end
-
-            # --- publish public dotfiles (full update only) ---
-            # Syncs the public-safe subset of ~/.config to its GitHub repos.
-            # Shows a diff + confirms before pushing; secret-scan gates every repo.
-            if type -q publish-dots
-                publish-dots
             end
 
             # --- self-heal failed steps ---
