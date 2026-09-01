@@ -91,5 +91,6 @@ direnv hook fish | source
 # Disable fish greeting
 set fish_greeting ""
 
-# local bin (claude code, etc.)
-fish_add_path "$HOME/.local/bin"
+# local bin (claude code, locally-patched kew, etc.)
+# explicit prepend so it stays ahead of /opt/homebrew/bin (shadows brew kew)
+set -x PATH "$HOME/.local/bin" $PATH

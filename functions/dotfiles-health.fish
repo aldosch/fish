@@ -75,6 +75,8 @@ function dotfiles-health
     # -------------------------------------------------------------------------
     # Check: pnpm globals
     # -------------------------------------------------------------------------
+    # Uses prefetched data from $__dot_pnpm_log if available (set by the
+    # parallel prefetch in the main flow), otherwise gathers inline.
     function __dot_check_pnpm
         set -l canonical ~/.config/pnpm/globals.txt
         test -f "$canonical"; or return
@@ -82,8 +84,16 @@ function dotfiles-health
         set -l declared (__dot_parse_list $canonical)
         test -n "$declared"; or return
 
-        set -l pnpm_out (pnpm list -g --depth=0 --json 2>/dev/null)
-        if test $status -ne 0
+        set -l pnpm_out
+        set -l pnpm_rc 1
+        if set -q __dot_pnpm_log; and test -f "$__dot_pnpm_log"
+            set pnpm_out (cat "$__dot_pnpm_log" 2>/dev/null)
+            set pnpm_rc "$__dot_pnpm_rc"
+        else
+            set pnpm_out (pnpm list -g --depth=0 --json 2>/dev/null)
+            set pnpm_rc $status
+        end
+        if test $pnpm_rc -ne 0
             __dot_log "pnpm: list failed, skipping"
             return
         end
@@ -112,6 +122,8 @@ function dotfiles-health
     # -------------------------------------------------------------------------
     # Check: uv tools
     # -------------------------------------------------------------------------
+    # Uses prefetched data from $__dot_uv_log if available (set by the
+    # parallel prefetch in the main flow), otherwise gathers inline.
     function __dot_check_uv
         set -l canonical ~/.config/uv/tools.txt
         test -f "$canonical"; or return
@@ -119,7 +131,12 @@ function dotfiles-health
         set -l declared (__dot_parse_list $canonical)
         test -n "$declared"; or return
 
-        set -l installed (uv tool list 2>/dev/null | grep -v '^-' | grep -v '^\s*$' | awk '{print $1}' | sort)
+        set -l installed
+        if set -q __dot_uv_log; and test -f "$__dot_uv_log"
+            set installed (cat "$__dot_uv_log" 2>/dev/null | grep -v '^-' | grep -v '^\s*$' | awk '{print $1}' | sort)
+        else
+            set installed (uv tool list 2>/dev/null | grep -v '^-' | grep -v '^\s*$' | awk '{print $1}' | sort)
+        end
         if test -z "$installed" -a (count $declared) -gt 0
             __dot_log "uv: tool list empty, skipping"
             return
@@ -252,14 +269,48 @@ function dotfiles-health
     end
 
     # -------------------------------------------------------------------------
-    # Run all checks
+    # Run all checks (pnpm + uv prefetched in parallel with fast checks)
     # -------------------------------------------------------------------------
-    __dot_check_pnpm
-    __dot_check_uv
+
+    # Launch slow listing commands in parallel (pnpm ~3-5s, uv ~1s)
+    set -l ts (date +%s)
+    set -l pnpm_log /tmp/dot-health-pnpm-$ts.log
+    set -l uv_log /tmp/dot-health-uv-$ts.log
+    set -l pnpm_exit /tmp/dot-health-pnpm-$ts.exit
+    set -l uv_exit /tmp/dot-health-uv-$ts.exit
+
+    fish -c "pnpm list -g --depth=0 --json >$pnpm_log 2>/dev/null; echo \$status >$pnpm_exit" &
+    set -l pnpm_pid $last_pid
+
+    fish -c "uv tool list >$uv_log 2>/dev/null; echo \$status >$uv_exit" &
+    set -l uv_pid $last_pid
+
+    # Fast checks run while prefetch is in flight
     __dot_check_opencode
     __dot_check_ghostty
     __dot_check_git
     __dot_check_heal_backlog
+
+    # Wait for prefetch to complete
+    wait $pnpm_pid 2>/dev/null
+    wait $uv_pid 2>/dev/null
+
+    # Set globals for check functions to use
+    set -g __dot_pnpm_log $pnpm_log
+    set -g __dot_pnpm_rc (string trim (cat $pnpm_exit 2>/dev/null; or echo 1))
+    set -g __dot_uv_log $uv_log
+    set -g __dot_uv_rc (string trim (cat $uv_exit 2>/dev/null; or echo 1))
+
+    # Run pnpm + uv checks with prefetched data
+    __dot_check_pnpm
+    __dot_check_uv
+
+    # Cleanup prefetch temps
+    rm -f $pnpm_log $uv_log $pnpm_exit $uv_exit
+    set -e __dot_pnpm_log
+    set -e __dot_pnpm_rc
+    set -e __dot_uv_log
+    set -e __dot_uv_rc
 
     # -------------------------------------------------------------------------
     # Generate message

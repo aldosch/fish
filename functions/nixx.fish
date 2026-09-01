@@ -264,12 +264,14 @@ function nixx
             set -a tasks "brew|brew-cleanup|Cleaning up homebrew|300|brew-upgrade||brew cleanup"
             set -a tasks "nvim|nvim|Updating neovim plugins|600|||nvim --headless '+Lazy! sync' '+qa!'"
             set -a tasks "skills|skills|Updating agent skills|300|||skills-sync"
+            set -a tasks "chromium|chromium-ext-update|Updating Chromium extensions|120|||chromium-ext-update"
             set -a tasks "claude|claude|Installing/updating claude|60|||curl -fsSL https://claude.ai/install.sh | sh"
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
             set -a tasks "node|node-corepack-enable|Enabling corepack shims|60|node-fnm||corepack enable"
             set -a tasks "node|node-corepack-prepare|Updating pnpm (corepack)|60|node-corepack-enable||corepack prepare pnpm@latest --activate"
             set -a tasks "node|node-pnpm-globals|Updating pnpm globals|120|node-corepack-prepare||pnpm update -g"
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
+            set -a tasks "kew|kew-sync|Updating patched kew|600|||kew-sync"
             set -a tasks "opencode|opencode-plugin|Updating opencode plugin|120|node-pnpm-globals||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
     end
 
