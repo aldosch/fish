@@ -263,7 +263,7 @@ function nixx
             set -a tasks "brew|brew-upgrade|Upgrading homebrew packages|600|brew-update|==> Upgrading |opencode-upgrade-check; and brew upgrade"
             set -a tasks "brew|brew-cleanup|Cleaning up homebrew|300|brew-upgrade||brew cleanup"
             set -a tasks "nvim|nvim|Updating neovim plugins|600|||nvim --headless '+Lazy! sync' '+qa!'"
-            set -a tasks "skills|skills|Updating agent skills|300|||skills-sync"
+            set -a tasks "skills|skills|Updating agent skills|600|||skills-sync"
             set -a tasks "chromium|chromium-ext-update|Updating Chromium extensions|120|||chromium-ext-update"
             set -a tasks "claude|claude|Installing/updating claude|60|||curl -fsSL https://claude.ai/install.sh | sh"
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"

@@ -89,7 +89,8 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
     set -l stamp (date +%s)
     set -l heal_log /tmp/nixx-heal-$stamp.log
     set -l heal_exit /tmp/nixx-heal-$stamp.exit
-    set -l heal_timeout 60
+    # opencode plan runs commonly take 60-120s+; 60s killed healthy diagnoses
+    set -l heal_timeout 180
 
     # Read prompt as a single string (string collect preserves newlines)
     set -l prompt_text (cat $prompt_file | string collect)
@@ -129,8 +130,12 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
     rm -f $heal_exit
 
     if test $rc -ne 0
-        rm -f $heal_log
-        gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (diagnosis failed or timed out)"
+        if test -s $heal_log
+            gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (diagnosis failed or timed out) — log: $heal_log"
+        else
+            rm -f $heal_log
+            gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (diagnosis failed or timed out)"
+        end
         return 1
     end
 
@@ -269,7 +274,7 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
             set -l apply_stamp (date +%s)
             set -l apply_log /tmp/nixx-heal-apply-$apply_stamp.log
             set -l apply_exit /tmp/nixx-heal-apply-$apply_stamp.exit
-            set -l apply_timeout 120
+            set -l apply_timeout 180
 
             fish -c "opencode run --agent build --auto \$argv[1] >$apply_log 2>&1; echo \$status >$apply_exit" -- "$apply_prompt" &
             set -l apply_pid $last_pid

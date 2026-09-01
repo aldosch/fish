@@ -4,12 +4,14 @@
 # (and the background LaunchAgent that went with them).
 #
 # `skills update -g -y` checks all 20+ source repos sequentially (2-4 min).
-# This function fetches every repo's `pushed_at` in parallel via `gh api` (~2s),
-# compares against a tiny cache, and calls `skills update` only for skills whose
-# repo actually has new commits since the last check. The cache stores just one
-# timestamp per repo — without it, repos that pushed to unrelated paths would be
-# re-flagged forever (skills update doesn't advance updatedAt when content
-# hasn't changed).
+# This function fetches every repo's `pushed_at` in parallel with bounded
+# curl requests (~2s; gh api has no total timeout, so a black-holed
+# connection could stall the step until nixx's watchdog kills it),
+# compares against a tiny cache, and calls `skills update` only for skills
+# whose repo actually has new commits since the last check. The cache stores
+# just one timestamp per repo — without it, repos that pushed to unrelated
+# paths would be re-flagged forever (skills update doesn't advance updatedAt
+# when content hasn't changed).
 #
 # Usage:
 #   skills-sync           - parallel pre-check + targeted update (called by nixx)
@@ -128,11 +130,19 @@ function skills-sync
     end
     set -l n_repos (count $repos)
 
-    # parallel fetch of pushed_at per repo into temp files
+    # parallel fetch of pushed_at per repo into temp files.
+    # curl (not gh api) so each request is bounded by --max-time: gh has no
+    # total timeout and a black-holed connection would stall the `wait` until
+    # nixx's watchdog kills the whole skills step. Repos that fail or time out
+    # end up with no file and are treated as inaccessible (skipped) below.
     set -l tmpdir (mktemp -d /tmp/skills-sync-XXXX)
+    set -l gh_token (gh auth token 2>/dev/null)
     for repo in $repos
         set -l key (string replace -a '/' '__' -- $repo)
-        gh api "repos/$repo" --jq .pushed_at >"$tmpdir/$key" 2>/dev/null &
+        curl -fsSL --max-time 15 \
+            -H "Authorization: Bearer $gh_token" \
+            "https://api.github.com/repos/$repo" 2>/dev/null \
+            | jq -r '.pushed_at // empty' >"$tmpdir/$key" 2>/dev/null &
     end
     wait
 
@@ -183,12 +193,16 @@ function skills-sync
 
     if test $n_changed -gt 0
         set -lx GITHUB_TOKEN (gh auth token 2>/dev/null)
-        skills update -g -y $changed >/dev/null 2>&1
+        # log to a file (not /dev/null): a hung or failed update is otherwise
+        # undebuggable — this exact call was blamed for a silent 5m skills hang
+        set -l update_log /tmp/skills-sync-update-(date +%s).log
+        skills update -g -y $changed >$update_log 2>&1
         set -l rc $status
         set -l t_end (date +%s)
         set -l elapsed (__nixx_fmt_time (math "$t_end - $t_start"))
 
         if test $rc -eq 0
+            rm -f $update_log
             gum join --horizontal \
                 (gum style --foreground $p_green "  ✓") \
                 (gum style --foreground $p_fg " $n_changed skill(s) updated ($n_repos repos checked$skip_note)") \
@@ -198,6 +212,11 @@ function skills-sync
                 (gum style --foreground $p_orange "  ▲") \
                 (gum style --foreground $p_fg " $n_changed skill(s) updated with warnings") \
                 (gum style --foreground $p_muted " ($elapsed)")
+            if test -s $update_log
+                gum style --foreground $p_muted --faint "     log: $update_log"
+            else
+                rm -f $update_log
+            end
         end
     else
         set -l t_end (date +%s)
