@@ -131,10 +131,10 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
 
     if test $rc -ne 0
         if test -s $heal_log
-            gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (diagnosis failed or timed out) — log: $heal_log"
+            gum style --foreground $p_muted "  ⚡ self-heal skipped (diagnosis failed or timed out) — log: $heal_log"
         else
             rm -f $heal_log
-            gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (diagnosis failed or timed out)"
+            gum style --foreground $p_muted "  ⚡ self-heal skipped (diagnosis failed or timed out)"
         end
         return 1
     end
@@ -144,7 +144,7 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
     rm -f $heal_log
 
     if test -z "$diagnosis"
-        gum style --foreground $p_muted --faint "  ⚡ self-heal skipped (no response from agent)"
+        gum style --foreground $p_muted "  ⚡ self-heal skipped (no response from agent)"
         return 1
     end
 
@@ -316,14 +316,14 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
                         gum join --horizontal \
                             (gum style --foreground $p_green "  ✓") \
                             (gum style --foreground $p_fg " fix applied") \
-                            (gum style --foreground $p_muted --faint " ($subject)")
+                            (gum style --foreground $p_muted " ($subject)")
                     else
                         # committed, but without the requested prefix: leave
                         # the agent's commit alone, just surface it
                         gum join --horizontal \
                             (gum style --foreground $p_green "  ✓") \
                             (gum style --foreground $p_fg " fix applied") \
-                            (gum style --foreground $p_yellow --faint " (committed as: $subject)")
+                            (gum style --foreground $p_yellow " (committed as: $subject)")
                     end
                 else
                     # no new commit: fall back to committing whatever the
@@ -344,18 +344,18 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
                             gum join --horizontal \
                                 (gum style --foreground $p_green "  ✓") \
                                 (gum style --foreground $p_fg " fix applied") \
-                                (gum style --foreground $p_muted --faint " (committed: self-heal: $context)")
+                                (gum style --foreground $p_muted " (committed: self-heal: $context)")
                         else
                             gum join --horizontal \
                                 (gum style --foreground $p_green "  ✓") \
                                 (gum style --foreground $p_fg " fix applied") \
-                                (gum style --foreground $p_yellow --faint " (uncommitted, staged; commit manually)")
+                                (gum style --foreground $p_yellow " (uncommitted, staged; commit manually)")
                         end
                     else
                         gum join --horizontal \
                             (gum style --foreground $p_green "  ✓") \
                             (gum style --foreground $p_fg " fix applied") \
-                            (gum style --foreground $p_muted --faint " (nothing to commit)")
+                            (gum style --foreground $p_muted " (nothing to commit)")
                     end
                 end
             else
@@ -363,7 +363,7 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
                     (gum style --foreground $p_red "  ✗") \
                     (gum style --foreground $p_fg " apply failed (rc=$apply_rc)")
                 if test -s "$apply_log"
-                    gum style --foreground $p_muted --faint "    log: $apply_log"
+                    gum style --foreground $p_muted "    log: $apply_log"
                 else
                     rm -f $apply_log
                 end
@@ -391,12 +391,12 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
             gum join --horizontal \
                 (gum style --foreground $p_green "  ✓") \
                 (gum style --foreground $p_fg " documented") \
-                (gum style --foreground $p_muted --faint " (dot heal to view)")
+                (gum style --foreground $p_muted " (dot heal to view)")
             echo
             return 2
 
         case '*'
-            gum style --foreground $p_muted --faint "  → skipped"
+            gum style --foreground $p_muted "  → skipped"
             echo
             return 1
     end

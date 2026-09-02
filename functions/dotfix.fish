@@ -14,7 +14,7 @@ function dotfix
     gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
         --padding "0 2" --align center \
         "dotfix" \
-        (gum style --faint --foreground $p_muted "interactive drift remediation")
+        (gum style --foreground $p_muted "interactive drift remediation")
     echo
 
     nixx check

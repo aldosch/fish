@@ -124,7 +124,7 @@ function pullall
 
         # Show inline progress (overwrite same line)
         printf "\r\033[2K"
-        printf "%s" (gum style --foreground $p_purple --faint "Scanning $display_dir →")" "(gum style --foreground $p_muted "$repo_name")" "(gum style --foreground $p_muted --faint "($repo_index/$grand_total)")
+        printf "%s" (gum style --foreground $p_purple "Scanning $display_dir →")" "(gum style --foreground $p_muted "$repo_name")" "(gum style --foreground $p_muted "($repo_index/$grand_total)")
 
         # Store original branch
         set -l original_branch (git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -279,7 +279,7 @@ function pullall
 
     # Display changes
     if test (count $change_log) -gt 0
-        gum style --foreground $p_green --bold "✅ updated repos:"
+        gum style --foreground $p_green --bold "✓ updated repos:"
         for item in $change_log
             set -l parts (string split "|" -- "$item")
             set -l name $parts[1]
@@ -291,7 +291,7 @@ function pullall
 
     # Display errors
     if test (count $error_log) -gt 0
-        gum style --foreground $p_red --bold "⚠️  errors:"
+        gum style --foreground $p_red --bold "✗ errors:"
         for item in $error_log
             set -l parts (string split "|" -- "$item")
             set -l name $parts[1]
@@ -303,7 +303,7 @@ function pullall
 
     # Summary
     if test $repos_with_changes -eq 0 -a $repos_with_errors -eq 0
-        gum style --foreground $p_green "✨ All $total_repos repos up to date"
+        gum style --foreground $p_green "✓ All $total_repos repos up to date"
     else
         set -l summary_parts
         if test $repos_with_changes -gt 0

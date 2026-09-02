@@ -55,7 +55,7 @@ function opencode-restore
     gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
         --padding "0 2" --align center \
         "opencode-restore" \
-        (gum style --faint --foreground $p_muted "installing plugin deps from pnpm-lock.yaml")
+        (gum style --foreground $p_muted "installing plugin deps from pnpm-lock.yaml")
     echo
 
     # --- optional update step: advance the caret range within ^1.18.0 ---
@@ -135,7 +135,7 @@ function opencode-restore
             (gum style --foreground $p_red "  ✗") \
             (gum style --foreground $p_fg " Install failed") \
             (gum style --foreground $p_muted " ($elapsed_str)")
-        gum style --foreground $p_muted --faint "    log: $tmplog"
+        gum style --foreground $p_muted "    log: $tmplog"
         rm -f $exitfile
         return 1
     end

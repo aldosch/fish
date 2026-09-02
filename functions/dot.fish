@@ -31,7 +31,7 @@ function dot --argument-names subcmd
                 gum join --horizontal \
                     (gum style --foreground $p_green "  ✓") \
                     (gum style --foreground $p_fg " all good, no drift") \
-                    (gum style --foreground $p_muted --faint " · checked $generated")
+                    (gum style --foreground $p_muted " · checked $generated")
                 echo
                 return
             end
@@ -41,7 +41,7 @@ function dot --argument-names subcmd
             set header_parts $header_parts (gum style --bold --foreground $p_purple "dotfiles health")
             set header_parts $header_parts (gum style --foreground $p_muted " · $count notice(s)")
             if test "$auto_fixed" -gt 0 2>/dev/null
-                set header_parts $header_parts (gum style --foreground $p_green --faint " ($auto_fixed auto-fixed)")
+                set header_parts $header_parts (gum style --foreground $p_green " ($auto_fixed auto-fixed)")
             end
             gum join --horizontal $header_parts
             echo
@@ -79,7 +79,7 @@ function dot --argument-names subcmd
                     (gum style --foreground $color "  $icon") \
                     (gum style --foreground $p_fg " $name") \
                     (gum style --foreground $p_muted "  $surface")
-                gum style --foreground $p_muted --faint "    $summary"
+                gum style --foreground $p_muted "    $summary"
             end
 
             # Message + action

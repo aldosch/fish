@@ -45,7 +45,7 @@ function nixx-drift
         gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
             --padding "0 2" --align center \
             "nixx · drift check" \
-            (gum style --faint --foreground $p_muted "$hostname")
+            (gum style --foreground $p_muted "$hostname")
     end
 
     function __drift_section
@@ -77,11 +77,11 @@ function nixx-drift
                 (gum style --foreground $p_muted "  $surface"))
             echo $label
             if test -n "$extra"
-                gum style --foreground $p_muted --faint "    $extra"
+                gum style --foreground $p_muted "    $extra"
             end
 
             if test "$__drift_interactive" -eq 0
-                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                gum style --foreground $p_muted "    → report-only (no TTY); resolve with: nixx check"
                 set -g __drift_action dismiss
                 return
             end
@@ -111,11 +111,11 @@ function nixx-drift
                 (gum style --foreground $p_muted "  $surface"))
             echo $label
             if test -n "$extra"
-                gum style --foreground $p_muted --faint "    $extra"
+                gum style --foreground $p_muted "    $extra"
             end
 
             if test "$__drift_interactive" -eq 0
-                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                gum style --foreground $p_muted "    → report-only (no TTY); resolve with: nixx check"
                 set -g __drift_action dismiss
                 return
             end
@@ -519,14 +519,14 @@ function nixx-drift
         __drift_section "model catalog"
 
         if not test -f "$logfile"
-            gum style --foreground $p_muted "  ✗ Scan failed (no log file)"
+            gum style --foreground $p_red "  ✗ Scan failed (no log file)"
             return
         end
 
         __drift_parse_logfile $logfile
 
         if test -n "$parse_error"
-            gum style --foreground $p_muted "  ✗ $parse_error"
+            gum style --foreground $p_red "  ✗ $parse_error"
             return
         end
 
@@ -540,7 +540,7 @@ function nixx-drift
         end
 
         if test (count $msg_lines) -eq 0
-            gum style --foreground $p_muted "  ✗ No output from model catalog check"
+            gum style --foreground $p_red "  ✗ No output from model catalog check"
             return
         end
 
@@ -550,7 +550,7 @@ function nixx-drift
                     (gum style --foreground $p_orange "  ▸") \
                     (gum style --foreground $p_fg " "(string sub -s 4 -- $msg))
             else if string match -q '  →*' -- $msg
-                gum style --foreground $p_muted --faint "    "(string sub -s 4 -- $msg)
+                gum style --foreground $p_muted "    "(string sub -s 4 -- $msg)
             end
         end
     end
@@ -588,7 +588,7 @@ function nixx-drift
                 (gum style --foreground $p_muted "  uses pnpx (broken under pnpm 11 for ESM pkgs)")
 
             if test "$__drift_interactive" -eq 0
-                gum style --foreground $p_muted --faint "    → report-only (no TTY); fix: change pnpx → npx -y in opencode.json"
+                gum style --foreground $p_muted "    → report-only (no TTY); fix: change pnpx → npx -y in opencode.json"
                 continue
             end
 
@@ -655,7 +655,7 @@ function nixx-drift
                     (gum style --foreground $p_fg "  $name") \
                     (gum style --foreground $p_muted "  $parse_actual not found")
                 if test "$__drift_interactive" -eq 0
-                    gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                    gum style --foreground $p_muted "    → report-only (no TTY); resolve with: nixx check"
                 end
                 continue
             end
@@ -679,7 +679,7 @@ function nixx-drift
                             gum style --foreground $p_red "    $line"
                         end
                     case '@'
-                        gum style --foreground $p_muted --faint "    $line"
+                        gum style --foreground $p_muted "    $line"
                     case '*'
                         if test "$line" != ""
                             gum style --foreground $p_muted "    $line"
@@ -688,7 +688,7 @@ function nixx-drift
             end
 
             if test "$__drift_interactive" -eq 0
-                gum style --foreground $p_muted --faint "    → report-only (no TTY); resolve with: nixx check"
+                gum style --foreground $p_muted "    → report-only (no TTY); resolve with: nixx check"
                 continue
             end
 

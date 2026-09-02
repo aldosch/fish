@@ -28,7 +28,7 @@ function scripts-restore
     gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
         --padding "0 2" --align center \
         "scripts-restore" \
-        (gum style --faint --foreground $p_muted "syncing LaunchAgents from ~/.config/scripts/")
+        (gum style --foreground $p_muted "syncing LaunchAgents from ~/.config/scripts/")
     echo
 
     set -l installed 0
@@ -50,7 +50,7 @@ function scripts-restore
             gum join --horizontal \
                 (gum style --foreground $p_muted "  –") \
                 (gum style --foreground $p_muted " $label") \
-                (gum style --foreground $p_muted --faint " (already loaded)")
+                (gum style --foreground $p_muted " (already loaded)")
             set skipped (math $skipped + 1)
             continue
         end
@@ -118,7 +118,7 @@ fish -c docs-sync >/dev/null 2>&1 &
         gum join --horizontal \
             (gum style --foreground $p_muted "  –") \
             (gum style --foreground $p_muted " post-push hook") \
-            (gum style --foreground $p_muted --faint " (already installed)")
+            (gum style --foreground $p_muted " (already installed)")
     end
 
     echo

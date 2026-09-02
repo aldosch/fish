@@ -202,7 +202,7 @@ function nixx
     gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
         --padding "0 2" --align center \
         "nixx · $mode_label" \
-        (gum style --faint --foreground $p_muted "$hostname")
+        (gum style --foreground $p_muted "$hostname")
 
     # --- sudo pre-auth + keep-alive for modes that need it ---
     switch "$mode"
@@ -391,7 +391,7 @@ function nixx
             gum style --foreground $p_green --bold --border rounded --border-foreground $p_green \
                 --padding "0 2" \
                 "✓  Done · $total_elapsed_str" \
-                (gum style --faint --foreground $p_muted "$detail_str")
+                (gum style --foreground $p_muted "$detail_str")
         else
             gum style --foreground $p_green --bold --border rounded --border-foreground $p_green \
                 --padding "0 2" \
@@ -402,7 +402,7 @@ function nixx
             gum style --foreground $p_red --bold --border rounded --border-foreground $p_red \
                 --padding "0 2" \
                 "▲  $fail_count of $total_count steps failed · $total_elapsed_str" \
-                (gum style --faint --foreground $p_muted "$detail_str")
+                (gum style --foreground $p_muted "$detail_str")
         else
             gum style --foreground $p_red --bold --border rounded --border-foreground $p_red \
                 --padding "0 2" \

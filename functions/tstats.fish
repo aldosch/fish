@@ -44,7 +44,7 @@ function tstats --argument-names subcmd
             if not test -f "$findings_file"
                 gum style --foreground $p_muted "  no findings yet. the monitor auto-analyzes after 24h of data or 10 spikes."
                 gum style --foreground $p_muted "  monitor state:"
-                bash "$monitor_script" --status 2>/dev/null | gum style --foreground $p_muted --faint
+                bash "$monitor_script" --status 2>/dev/null | gum style --foreground $p_muted
                 return
             end
 
@@ -72,11 +72,11 @@ function tstats --argument-names subcmd
             echo
 
             if test -f "$report_file"
-                gum style --foreground $p_muted --faint "── report (first 25 lines) ──────────────────────────"
+                gum style --foreground $p_muted "── report (first 25 lines) ──────────────────────────"
                 head -25 "$report_file" | gum style --foreground $p_fg
                 set -l total (wc -l < "$report_file" | string trim)
                 if test "$total" -gt 25
-                    gum style --foreground $p_muted --faint "  … $(math $total - 25) more lines — full report: $report_file"
+                    gum style --foreground $p_muted "  … $(math $total - 25) more lines — full report: $report_file"
                 end
             end
 
@@ -87,7 +87,7 @@ function tstats --argument-names subcmd
                 (gum style --foreground $p_muted "   · re-analyze: ") \
                 (gum style --foreground $p_cyan "tstats analyze")
             if test -n "$session_id" -a "$session_id" != "null"
-                gum style --foreground $p_muted --faint "    session: $session_id"
+                gum style --foreground $p_muted "    session: $session_id"
             end
             echo
 

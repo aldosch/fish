@@ -56,7 +56,7 @@ function skills-sync
         gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
             --padding "0 2" --align center \
             "skills-sync --restore" \
-            (gum style --faint --foreground $p_muted "reinstalling from .skill-lock.json")
+            (gum style --foreground $p_muted "reinstalling from .skill-lock.json")
         echo
 
         set -l t_start (date +%s)
@@ -213,7 +213,7 @@ function skills-sync
                 (gum style --foreground $p_fg " $n_changed skill(s) updated with warnings") \
                 (gum style --foreground $p_muted " ($elapsed)")
             if test -s $update_log
-                gum style --foreground $p_muted --faint "     log: $update_log"
+                gum style --foreground $p_muted "     log: $update_log"
             else
                 rm -f $update_log
             end

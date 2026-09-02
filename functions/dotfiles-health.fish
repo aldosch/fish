@@ -360,7 +360,7 @@ function dotfiles-health
                 (gum style --foreground $p_muted "    → run: ") \
                 (gum style --foreground $p_cyan --bold "dotfix")
             if test $__dot_auto_fixed -gt 0
-                gum style --foreground $p_muted --faint "    ($__dot_auto_fixed auto-fixed, $item_count total)"
+                gum style --foreground $p_muted "    ($__dot_auto_fixed auto-fixed, $item_count total)"
             end
         end
         echo
