@@ -272,6 +272,7 @@ function nixx
             set -a tasks "node|node-pnpm-globals|Updating pnpm globals|120|node-corepack-prepare||pnpm update -g"
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
             set -a tasks "kew|kew-sync|Updating patched kew|600|||kew-sync"
+            set -a tasks "ghostty|ghostty-sync|Updating patched ghostty|1800|||ghostty-sync"
             set -a tasks "opencode|opencode-plugin|Updating opencode plugin|120|node-pnpm-globals||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
     end
 
