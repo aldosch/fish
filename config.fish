@@ -70,7 +70,7 @@ set -x PATH "$HOME/Library/Application Support/fnm" $PATH
 
 # pnpm configuration
 set -gx PNPM_HOME "$HOME/Library/pnpm"
-for _d in "$PNPM_HOME/bin" "$PNPM_HOME"
+for _d in "$PNPM_HOME" "$PNPM_HOME/bin"
     if not contains -- $_d $PATH
         set -gx PATH $_d $PATH
     end
