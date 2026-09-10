@@ -86,12 +86,11 @@ function dot --argument-names subcmd
             echo
             if test -n "$message"
                 gum join --horizontal \
-                    (gum style --foreground $p_muted "  · ") \
                     (gum style --foreground $p_fg "$message")
             end
             gum join --horizontal \
-                (gum style --foreground $p_muted "  → run: ") \
-                (gum style --foreground $p_cyan --bold "dotfix")
+                (gum style --foreground $p_muted " → run: ") \
+                (gum style --foreground $p_cyan "dotfix")
             echo
 
         case refresh

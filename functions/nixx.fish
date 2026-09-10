@@ -27,6 +27,13 @@ function nixx
         return 1
     end
 
+    # --- persistent step logs ---
+    # Step logs live here (not /tmp) so failures stay investigable after a
+    # reboot; 7-day retention, pruned on every run.
+    set -g __nixx_log_dir "$HOME/Library/Logs/nixx"
+    mkdir -p $__nixx_log_dir
+    find $__nixx_log_dir -type f -mtime +7 -delete 2>/dev/null
+
     _aldo_dracula_apply_palette
 
     # --- parse flags ---
@@ -70,7 +77,7 @@ function nixx
         end
         set -l cmd (string join " " $cmd_parts)
 
-        set -l logfile /tmp/nixx-(string replace -ra '[^a-zA-Z0-9]' '-' $label)-(date +%s).log
+        set -l logfile $__nixx_log_dir/(string replace -ra '[^a-zA-Z0-9]' '-' $label)-(date +%s).log
         set -l t_start (date +%s)
         set -l status_code 0
 
@@ -136,6 +143,14 @@ function nixx
         set -l elapsed (math "$t_end - $t_start")
         set -l elapsed_str (__nixx_fmt_time $elapsed)
 
+        # result status: ok | fail | timeout (timed out at the watchdog)
+        set -l result_status fail
+        if test $status_code -eq 0
+            set result_status ok
+        else if test $status_code -eq 124
+            set result_status timeout
+        end
+
         if test $status_code -eq 0
             if test "$__nixx_verbose" -eq 1
                 echo
@@ -148,7 +163,7 @@ function nixx
                     (gum style --foreground $p_fg " $label") \
                     (gum style --foreground $p_muted " ($elapsed_str)")
             end
-            set -g __nixx_results $__nixx_results "$label|ok|$elapsed_str|"
+            set -g __nixx_results $__nixx_results "$label|$result_status|$elapsed_str|"
             rm -f $logfile
         else
             set -l reason
@@ -167,7 +182,7 @@ function nixx
                     (gum style --foreground $p_muted " ($elapsed_str$reason)")
                 gum style --foreground $p_muted "     log: $logfile"
             end
-            set -g __nixx_results $__nixx_results "$label|fail|$elapsed_str|$logfile"
+            set -g __nixx_results $__nixx_results "$label|$result_status|$elapsed_str|$logfile"
         end
     end
 
@@ -269,11 +284,11 @@ function nixx
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
             set -a tasks "node|node-corepack-enable|Enabling corepack shims|60|node-fnm||corepack enable"
             set -a tasks "node|node-corepack-prepare|Updating pnpm (corepack)|60|node-corepack-enable||corepack prepare pnpm@latest --activate"
-            set -a tasks "node|node-pnpm-globals|Updating pnpm globals|120|node-corepack-prepare||pnpm update -g"
+            set -a tasks "node|node-pnpm-globals|Updating pnpm globals|300|node-corepack-prepare||pnpm update -g"
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
             set -a tasks "kew|kew-sync|Updating patched kew|600|||kew-sync"
             set -a tasks "ghostty|ghostty-sync|Updating patched ghostty|1800|||ghostty-sync"
-            set -a tasks "opencode|opencode-plugin|Updating opencode plugin|120|node-pnpm-globals||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
+            set -a tasks "opencode|opencode-plugin|Updating opencode plugin|300|node-corepack-prepare||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
     end
 
     # --- shared dispatch: modes with a task list (a, l, full) ---
@@ -418,6 +433,45 @@ function nixx
     end
     echo
 
+    # --- auto-document failures in TODO.md ---
+    # /tmp logs vanish; the backlog must not. Each failed or timed-out step
+    # is appended to TODO.md as an open checklist line. Deduped by step
+    # label: an already-documented still-open failure isn't logged twice
+    # (delete the line once fixed to re-arm the auto-log).
+    if test $fail_count -gt 0; and test -f ~/.config/TODO.md
+        set -l todo_docs 0
+        for r in $__nixx_results
+            set -l parts (string split "|" $r)
+            if test "$parts[2]" = ok; or test "$parts[2]" = blocked
+                continue
+            end
+            set -l kind failed
+            if test "$parts[2]" = timeout
+                set kind "timed out at its watchdog"
+            end
+            if not grep -qF -- "- [ ] nixx: $parts[1]" ~/.config/TODO.md
+                set -l log_note ""
+                if test -n "$parts[4]"
+                    set log_note " — log: $parts[4]"
+                end
+                printf "%s\n" "- [ ] nixx: $parts[1] step $kind on $(date +%Y-%m-%d) (auto-logged) — investigate, then delete this line$log_note" >>~/.config/TODO.md
+                set todo_docs (math $todo_docs + 1)
+            end
+        end
+        if test $todo_docs -gt 0
+            gum style --foreground $p_orange "  ▸ documented $todo_docs failure(s) in TODO.md"
+        end
+    end
+
+    # --- auto-commit generated state churn ---
+    # Lockfiles changed by this run (flake.lock, skill lockfile, lazy-lock,
+    # opencode lock, TODO auto-logged lines) are committed + pushed here so
+    # they never need manual staging. Runs before publish-dots so the public
+    # mirrors sync the committed state.
+    if type -q dots-autocommit
+        dots-autocommit
+    end
+
     # --- cleanup ---
     # kill sudo keep-alive
     if test $__nixx_sudo_keep_pid -gt 0
@@ -453,7 +507,7 @@ function nixx
             # fish runtime errors (e.g. test syntax errors) without catching
             # gum's terminal control output on stdout.
             if type -q scripts-restore
-                set -l sr_stderr /tmp/nixx-scripts-restore-(date +%s).err
+                set -l sr_stderr $__nixx_log_dir/scripts-restore-(date +%s).err
                 scripts-restore 2>$sr_stderr
                 if test -s $sr_stderr
                     and grep -q '\.fish.*(line [0-9]\+):' $sr_stderr 2>/dev/null

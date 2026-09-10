@@ -8,7 +8,8 @@
 # Design goals:
 #   - Silent when there's nothing to action (preserves the empty-greeting status quo)
 #   - Shows every new session until resolved or dismissed
-#   - One line, subtle colors, never blocks or prompts
+#   - One line, flush left and tight above the prompt, subtle colors,
+#     never blocks or prompts
 #   - Instant — reads a small JSON file, no network, no subprocesses beyond gum
 
 # Only show in interactive shells
@@ -43,13 +44,18 @@ test "$_dot_last_shown" = "$_dot_today"; and return
 # use a generic fallback.
 test -n "$_dot_msg"; or set _dot_msg "some stuff needs attention"
 
+# Flag for config.fish: when set, the first prompt render strips starship's
+# leading blank line so this notice sits directly above the prompt.
+set -g __dot_motd_shown 1
+
 # Use native set_color instead of gum: the gum pipeline (join + 3 styles)
 # forks 4 processes (~155ms measured) on EVERY shell that shows this line,
 # which doubles total startup. set_color renders identical output with zero
 # forks. Colors come from the dracula palette (available since
 # conf.d/aldo-dracula-palette.fish is sourced before this file alphabetically).
-printf '%s%s%s%s%s%s%s%s\n' \
-    (set_color $p_muted)"  · "(set_color normal) \
+# Flush left, tight: no leading indent, single space around the arrow, and
+# no bold on the action word (keeps the line visually small).
+printf '%s%s%s%s\n' \
     $_dot_msg \
-    (set_color $p_muted)"  →  "(set_color normal) \
-    (set_color $p_cyan --bold)dotfix(set_color normal)
+    (set_color $p_muted)" → "(set_color normal) \
+    (set_color $p_cyan)dotfix(set_color normal)

@@ -192,32 +192,76 @@ function skills-sync
     end
 
     if test $n_changed -gt 0
+        # Per-repo parallel updates instead of one sequential `skills update`:
+        # the CLI installs strictly sequentially (per-source loop with a
+        # blocking child-process spawn per skill — the source of the 5m+
+        # skills step this function replaced). Repos are independent except
+        # for the lockfile, which the CLI writes unlocked. Isolate each job's
+        # lockfile via XDG_STATE_HOME (the CLI's only lockfile seam; installs
+        # still go to ~/.agents/skills, which are disjoint per skill), then
+        # merge per-repo entries into the real lockfile afterwards.
+        # Failures self-heal: an unmerged entry's folder hash goes stale, so
+        # the next run re-updates that repo.
+        set -l upd_tmp (mktemp -d /tmp/skills-sync-upd-XXXX)
         set -lx GITHUB_TOKEN (gh auth token 2>/dev/null)
-        # log to a file (not /dev/null): a hung or failed update is otherwise
-        # undebuggable — this exact call was blamed for a silent 5m skills hang
-        set -l update_log /tmp/skills-sync-update-(date +%s).log
-        skills update -g -y $changed >$update_log 2>&1
-        set -l rc $status
-        set -l t_end (date +%s)
-        set -l elapsed (__nixx_fmt_time (math "$t_end - $t_start"))
+        for repo in $changed_repos
+            set -l key (string replace -a '/' '__' -- $repo)
+            fish -c "env XDG_STATE_HOME=$upd_tmp/$key skills add $repo -g -y >$upd_tmp/$key.log 2>&1; echo \$status >$upd_tmp/$key.exit" &
+        end
+        wait
 
-        if test $rc -eq 0
-            rm -f $update_log
-            gum join --horizontal \
-                (gum style --foreground $p_green "  ✓") \
-                (gum style --foreground $p_fg " $n_changed skill(s) updated ($n_repos repos checked$skip_note)") \
-                (gum style --foreground $p_muted " ($elapsed)")
-        else
-            gum join --horizontal \
-                (gum style --foreground $p_orange "  ▲") \
-                (gum style --foreground $p_fg " $n_changed skill(s) updated with warnings") \
-                (gum style --foreground $p_muted " ($elapsed)")
-            if test -s $update_log
-                gum style --foreground $p_muted "     log: $update_log"
+        set -l failed_repos
+        for repo in $changed_repos
+            set -l key (string replace -a '/' '__' -- $repo)
+            set -l rc (cat "$upd_tmp/$key.exit" 2>/dev/null; or echo 1)
+            set -l tmp_lock "$upd_tmp/$key/skills/.skill-lock.json"
+            if test "$rc" = 0; and test -f "$tmp_lock"
+                jq --slurpfile tl "$tmp_lock" '
+                    .skills as $old
+                    | ($tl[0].skills) as $new
+                    | .skills = (reduce ($new | to_entries[]) as $e (
+                        $old;
+                        . + {($e.key): ($e.value + {installedAt: ($old[$e.key].installedAt // $e.value.installedAt)})}
+                    ))' "$lockfile" >"$upd_tmp/merged.json" 2>/dev/null; and mv "$upd_tmp/merged.json" "$lockfile"
+                if test $status -ne 0
+                    set -a failed_repos $repo
+                end
             else
-                rm -f $update_log
+                set -a failed_repos $repo
             end
         end
+
+        set -l t_end (date +%s)
+        set -l elapsed (__nixx_fmt_time (math "$t_end - $t_start"))
+        set -l n_failed (count $failed_repos)
+        set -l n_upd_repos (count $changed_repos)
+        set -l n_updated (math "$n_upd_repos - $n_failed")
+
+        if test $n_failed -eq 0
+            gum join --horizontal \
+                (gum style --foreground $p_green "  ✓") \
+                (gum style --foreground $p_fg " $n_updated repo(s) updated in parallel ($n_repos repos checked$skip_note)") \
+                (gum style --foreground $p_muted " ($elapsed)")
+        else
+            # persist failed-repo logs (the temp dir goes away below)
+            set -l persist "$HOME/Library/Logs/nixx"
+            mkdir -p $persist
+            gum join --horizontal \
+                (gum style --foreground $p_orange "  ▲") \
+                (gum style --foreground $p_fg " $n_updated repo(s) updated, $n_failed failed ($elapsed)") \
+                (gum style --foreground $p_muted " — failed repos self-heal on the next run")
+            for repo in $failed_repos
+                set -l key (string replace -a '/' '__' -- $repo)
+                if test -s "$upd_tmp/$key.log"
+                    set -l kept "$persist/skills-sync-$key-(date +%s).log"
+                    mv "$upd_tmp/$key.log" "$kept" 2>/dev/null
+                    if test -s "$kept"
+                        gum style --foreground $p_muted "     log: $kept"
+                    end
+                end
+            end
+        end
+        rm -rf $upd_tmp
     else
         set -l t_end (date +%s)
         set -l elapsed (__nixx_fmt_time (math "$t_end - $t_start"))
@@ -226,7 +270,6 @@ function skills-sync
             (gum style --foreground $p_fg " $n_repos repos checked, all up to date$skip_note") \
             (gum style --foreground $p_muted " ($elapsed)")
     end
-
     # write cache: {repos: {repo: pushed_at}} for all accessible repos
     if test (count $cache_pairs) -gt 0
         set -l json_objs

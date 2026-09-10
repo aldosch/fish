@@ -86,9 +86,13 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
         "No preamble. No explanation beyond the three sections." >$prompt_file
 
     # --- run opencode headlessly in plan mode ---
+    # logs persist in ~/Library/Logs/nixx/ (7-day retention via nixx) so a
+    # failed diagnosis stays debuggable after a reboot
+    set -l heal_dir "$HOME/Library/Logs/nixx"
+    mkdir -p $heal_dir
     set -l stamp (date +%s)
-    set -l heal_log /tmp/nixx-heal-$stamp.log
-    set -l heal_exit /tmp/nixx-heal-$stamp.exit
+    set -l heal_log $heal_dir/nixx-heal-$stamp.log
+    set -l heal_exit $heal_dir/nixx-heal-$stamp.exit
     # opencode plan runs commonly take 60-120s+; 60s killed healthy diagnoses
     set -l heal_timeout 180
 
@@ -272,8 +276,8 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
             set -l apply_prompt "Fix this issue in the dotfiles repo ($repo): $root_cause. The fix: $fix_text. Read AGENTS.md for conventions. Make the edit, update docs if needed, then verify with any relevant lint/build commands. When the edit is done, commit it: stage ONLY the files you modified (git add <specific files>, never git add . or git add -A; the repo may contain unrelated dirty files) and commit with the message 'self-heal: <one line summary>'. Do not push."
 
             set -l apply_stamp (date +%s)
-            set -l apply_log /tmp/nixx-heal-apply-$apply_stamp.log
-            set -l apply_exit /tmp/nixx-heal-apply-$apply_stamp.exit
+            set -l apply_log $heal_dir/nixx-heal-apply-$apply_stamp.log
+            set -l apply_exit $heal_dir/nixx-heal-apply-$apply_stamp.exit
             set -l apply_timeout 180
 
             fish -c "opencode run --agent build --auto \$argv[1] >$apply_log 2>&1; echo \$status >$apply_exit" -- "$apply_prompt" &

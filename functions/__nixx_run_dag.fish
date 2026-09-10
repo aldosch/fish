@@ -122,7 +122,7 @@ function __nixx_run_dag
                 if test $t_watchdog[$i] -gt 0
                     __nixx_kill_tree $t_watchdog[$i] KILL 2>/dev/null
                 end
-                rm -f "$t_exitfile[$i]"
+                rm -f "$t_exitfile[$i]" "$t_logfile[$i].timedout"
             end
         end
 
@@ -161,7 +161,7 @@ function __nixx_run_dag
                 set t_status[$i] 4
             else if test $deps_ready -eq 1
                 # launch
-                set -l logfile /tmp/nixx-dag-(string replace -ra '[^a-zA-Z0-9]' '-' $t_id[$i])-(date +%s).log
+                set -l logfile $__nixx_log_dir/nixx-dag-(string replace -ra '[^a-zA-Z0-9]' '-' $t_id[$i])-(date +%s).log
                 set -l exitfile {$logfile}.exit
                 set t_logfile[$i]  $logfile
                 set t_exitfile[$i] $exitfile
@@ -307,8 +307,10 @@ function __nixx_run_dag
         switch $t_status[$i]
             case 2
                 set -g __nixx_results $__nixx_results "$t_label[$i]|ok|$et|$lf"
-            case 3 5
+            case 3
                 set -g __nixx_results $__nixx_results "$t_label[$i]|fail|$et|$lf"
+            case 5
+                set -g __nixx_results $__nixx_results "$t_label[$i]|timeout|$et|$lf"
             case 4
                 set -g __nixx_results $__nixx_results "$t_label[$i]|blocked|0s|"
         end
