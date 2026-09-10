@@ -3,11 +3,20 @@
 # highlighting. Sets global variables based on macOS dark/light mode.
 # Sourced automatically by fish via conf.d on every shell start.
 #
-# The values are the same Dracula / Alucard hues used by the other theme
-# surfaces, so everything matches: nvim (lua/aldo-dracula*.lua), opencode
-# (opencode/themes/aldo-dracula.json), ghostty (ghostty/themes/aldo-dracula*).
+# The values are ANSI palette SLOT NUMBERS (0-15), not hex. This is the
+# theme-switch fix: cells drawn with palette indices are re-resolved by
+# Ghostty against the active theme's palette on every repaint, so when
+# macOS appearance flips (theme = dark:aldo-dracula,light:aldo-dracula-light)
+# existing text instantly re-renders in the new theme's colors. Hex/truecolor
+# values are baked into the grid per-cell and go stale on a theme toggle
+# (dark ink stranded on a dark background).
 #
-# SEMANTIC MAP (use these roles, never raw colors, in new functions):
+# The two ghostty theme files (ghostty/themes/aldo-dracula*) are the source
+# of truth for what each slot looks like in each mode. They carry the same
+# Dracula / Alucard hues as nvim (lua/aldo-dracula*.lua) and opencode
+# (opencode/themes/aldo-dracula.json), so everything matches.
+#
+# SEMANTIC MAP (use these roles, never raw numbers, in new functions):
 #   p_fg      body text, task/step names
 #   p_muted   secondary text: timings, hints, paths, detail lines
 #   p_purple  headers, banners, borders, spinners, interactive selection
@@ -20,12 +29,22 @@
 #   p_*2      bright variants: list items, secondary emphasis
 #   p_bg/p_panel/p_element   fzf gutters, borders, chrome
 #
+# SLOT MAP (what each role resolves to in ghostty/themes/aldo-dracula*):
+#    1 red      2 green     3 yellow    4 blue (purple)
+#    5 magenta  6 cyan      8 brblack (muted)  9 brred 10 brgreen
+#   11 bryellow 12 brblue (purple2) 13 brmagenta 14 brcyan
+#
 # RULES:
 #   - Never stack gum's --faint on top of a $p_* color: it double-dims and
 #     washes out on light backgrounds. Color alone carries the hierarchy.
 #   - Reference $p_* variables directly; call _aldo_dracula_apply_palette at
-#     the top of a function to re-detect after a macOS appearance switch.
+#     the top of a function if it needs the fzf/pager chrome hexes fresh.
 #   - Force a mode for testing/SSH: ALDO_THEME=light|dark.
+#   - gum/termenv does not understand color names: pass slot numbers or hex.
+#     fish accepts the same numbers (set_color 8 -> 38;5;8 -> ghostty slot 8).
+#   - Orange has no palette slot, so p_orange/p_orange2 fold into the yellow
+#     slots (3/11): same urgency family, and they follow the theme like
+#     everything else instead of stranding truecolor ink on theme toggles.
 
 function _aldo_terminal_bg
     # Ask the terminal for its actual background color (OSC 11 query).
@@ -86,6 +105,10 @@ function _aldo_dracula_apply_palette
     # Mode resolution order: explicit argument > ALDO_THEME env var
     # (exported; useful for SSH and child shells) > terminal background
     # (OSC 11, the ground truth) > macOS appearance.
+    #
+    # Mode only matters for the fzf/pager chrome hexes (p_bg/p_panel/
+    # p_element): the text roles below are slot numbers, so they follow the
+    # ghostty theme automatically on every repaint.
     set -l _mode
     if set -q argv[1]; and test -n "$argv[1]"
         set _mode (string lower -- $argv[1])
@@ -98,65 +121,47 @@ function _aldo_dracula_apply_palette
         end
     end
     if test "$_mode" = dark
-        # ── Dark (Dracula) ────────────────────────────────────
+        # ── Dark (Dracula) chrome ─────────────────────────────
         set -g p_bg        "#161616"
         set -g p_panel     "#21222c"
         set -g p_element   "#282a36"
-        set -g p_fg        "#f8f8f2"
-        set -g p_muted     "#6272a4"   # comment blue-grey
-
-        set -g p_purple    "#bd93f9"
-        set -g p_pink      "#ff79c6"
-        set -g p_cyan      "#8be9fd"
-        set -g p_green     "#50fa7b"
-        set -g p_orange    "#ffb86c"
-        set -g p_red       "#ff5555"
-        set -g p_yellow    "#f1fa8c"
-
-        # bright variants (file names, secondary emphasis)
-        set -g p_purple2   "#d6acff"
-        set -g p_pink2     "#ff92df"
-        set -g p_cyan2     "#a4ffff"
-        set -g p_green2    "#69ff94"
-        set -g p_orange2   "#ffc896"
-        set -g p_red2      "#ff6e6e"
-        set -g p_yellow2   "#ffffa5"
     else
-        # ── Light (Alucard) ───────────────────────────────────
-        # Values shared with nvim + opencode + ghostty light themes.
-        # Text roles keep AA contrast on white; *2 variants are the
-        # nvim bright_* accents for list items and secondary emphasis.
+        # ── Light (Alucard) chrome ────────────────────────────
         set -g p_bg        "#ffffff"
         set -g p_panel     "#f0f0f5"
         set -g p_element   "#e4e4ef"
-        set -g p_fg        "#282a36"
-        set -g p_muted     "#6272a4"   # canonical Dracula comment hue
-
-        set -g p_purple    "#6b21c2"   # deep violet — headers, borders
-        set -g p_pink      "#b5179e"   # magenta
-        set -g p_cyan      "#0085a1"   # teal — section headers
-        set -g p_green     "#2d9648"   # green — checkmarks
-        set -g p_orange    "#b06d00"   # amber, darkened for text legibility
-        set -g p_red       "#c0392b"   # red
-        set -g p_yellow    "#8a6900"   # goldenrod, darkened for text legibility
-
-        # bright variants (nvim bright_* values; list items, secondary emphasis)
-        set -g p_purple2   "#8b35d6"
-        set -g p_pink2     "#cc2eb5"
-        set -g p_cyan2     "#00a0c0"
-        set -g p_green2    "#3aad5a"
-        set -g p_orange2   "#d4820a"
-        set -g p_red2      "#e05252"
-        set -g p_yellow2   "#d4a017"
     end
+
+    # ── Text roles: ANSI palette slots (see SLOT MAP above) ──
+    # Slot numbers re-resolve through the active ghostty theme palette on
+    # every repaint, so existing sessions heal instantly on a macOS theme
+    # toggle. p_fg = default foreground; gum renders it as default fg too
+    # (termenv ignores values it can't parse, which is the desired no-op).
+    set -g p_fg        normal
+    set -g p_muted     8    # brblack — comment blue-grey #6272a4
+
+    set -g p_purple    4    # blue slot — dracula purple
+    set -g p_pink      5    # magenta slot
+    set -g p_cyan      6    # cyan slot
+    set -g p_green     2    # green slot
+    set -g p_red       1    # red slot
+    set -g p_orange    3    # folded into yellow (no orange slot)
+    set -g p_yellow    3    # yellow slot
+
+    # bright variants (file names, secondary emphasis)
+    set -g p_purple2   12   # brblue
+    set -g p_pink2     13   # brmagenta
+    set -g p_cyan2     14   # brcyan
+    set -g p_green2    10   # brgreen
+    set -g p_orange2   11   # folded into bryellow
+    set -g p_red2      9    # brred
+    set -g p_yellow2   11   # bryellow
 
     # ── Fish syntax highlighting + pager ─────────────────────
     # Kept in the palette so typed commands, autosuggestions, and completion
-    # UI adapt to dark/light mode like everything else. Replaces the
-    # fish-4.3-migrated fish_frozen_theme.fish (fixed ANSI names, not
-    # adaptive). Same role→slot mapping in both modes, so dark renders
-    # exactly as before via the terminal's Dracula-mapped palette.
-    set -g fish_color_normal        $p_fg
+    # UI follow the terminal theme like everything else. Same role→slot
+    # mapping in both modes.
+    set -g fish_color_normal        normal
     set -g fish_color_command       $p_fg
     set -g fish_color_param         $p_cyan
     set -g fish_color_quote         $p_yellow
@@ -176,8 +181,8 @@ function _aldo_dracula_apply_palette
     set -g fish_color_user          $p_green2
     set -g fish_color_cwd           $p_green
     set -g fish_color_cwd_root      $p_red
-    set -g fish_color_search_match  $p_fg --background=$p_muted
-    set -g fish_color_selection     $p_fg --bold --background=$p_muted
+    set -g fish_color_search_match  normal --background=$p_muted
+    set -g fish_color_selection     normal --bold --background=$p_muted
     set -g fish_pager_color_completion        $p_fg
     set -g fish_pager_color_description       $p_yellow
     set -g fish_pager_color_prefix            $p_fg --bold --underline

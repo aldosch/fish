@@ -288,6 +288,7 @@ function nixx
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
             set -a tasks "kew|kew-sync|Updating patched kew|600|||kew-sync"
             set -a tasks "ghostty|ghostty-sync|Updating patched ghostty|1800|||ghostty-sync"
+            set -a tasks "opencode|opencode-sync|Updating patched opencode|1800|||opencode-sync"
             set -a tasks "opencode|opencode-plugin|Updating opencode plugin|300|node-corepack-prepare||pnpm update --dir ~/.config/opencode; or begin; rm -rf ~/.config/opencode/node_modules; and pnpm update --dir ~/.config/opencode; end"
     end
 
