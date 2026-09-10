@@ -3,16 +3,21 @@
 # highlighting. Sets global variables based on macOS dark/light mode.
 # Sourced automatically by fish via conf.d on every shell start.
 #
-# The values are ANSI palette SLOT NUMBERS (0-15), not hex. This is the
-# theme-switch fix: cells drawn with palette indices are re-resolved by
-# Ghostty against the active theme's palette on every repaint, so when
-# macOS appearance flips (theme = dark:aldo-dracula,light:aldo-dracula-light)
-# existing text instantly re-renders in the new theme's colors. Hex/truecolor
-# values are baked into the grid per-cell and go stale on a theme toggle
-# (dark ink stranded on a dark background).
+# WHY SLOT NUMBERS, NOT HEX:
+# Ghostty re-resolves palette-indexed cells against the active theme's
+# palette on every repaint. When macOS appearance flips (theme =
+# dark:aldo-dracula,light:aldo-dracula-light), existing text instantly
+# re-renders in the new theme's colors. Hex/truecolor values are baked into
+# the grid per-cell and go stale on a theme toggle (dark ink stranded on a
+# dark background). Parser constraints that force this shape:
+#   - gum/termenv: accepts slot numbers (emits aixterm/ANSI codes) or hex
+#     (emits truecolor, stale); rejects names silently.
+#   - fish set_color: accepts names or hex; rejects numbers, so the
+#     set_color wrapper (functions/set_color.fish) translates 0-15 -> names.
+#   - fish_color_*: assigned literal names below (fish's own parser).
 #
-# The two ghostty theme files (ghostty/themes/aldo-dracula*) are the source
-# of truth for what each slot looks like in each mode. They carry the same
+# The ghostty theme files (ghostty/themes/aldo-dracula*) are the source of
+# truth for what each slot looks like in each mode. They carry the same
 # Dracula / Alucard hues as nvim (lua/aldo-dracula*.lua) and opencode
 # (opencode/themes/aldo-dracula.json), so everything matches.
 #
@@ -30,21 +35,19 @@
 #   p_bg/p_panel/p_element   fzf gutters, borders, chrome
 #
 # SLOT MAP (what each role resolves to in ghostty/themes/aldo-dracula*):
-#    1 red      2 green     3 yellow    4 blue (purple)
-#    5 magenta  6 cyan      8 brblack (muted)  9 brred 10 brgreen
-#   11 bryellow 12 brblue (purple2) 13 brmagenta 14 brcyan
+#   1 red   2 green   3 yellow   4 blue (purple)   5 magenta (pink)
+#   6 cyan  7 white (fg ink)     8 brblack (muted)  9 brred  10 brgreen
+#   11 bryellow  12 brblue (purple2)  13 brmagenta (pink2)  14 brcyan
 #
 # RULES:
 #   - Never stack gum's --faint on top of a $p_* color: it double-dims and
 #     washes out on light backgrounds. Color alone carries the hierarchy.
-#   - Reference $p_* variables directly; call _aldo_dracula_apply_palette at
-#     the top of a function if it needs the fzf/pager chrome hexes fresh.
-#   - Force a mode for testing/SSH: ALDO_THEME=light|dark.
-#   - gum/termenv does not understand color names: pass slot numbers or hex.
-#     fish accepts the same numbers (set_color 8 -> 38;5;8 -> ghostty slot 8).
+#   - Reference $p_* variables directly in gum and set_color calls alike;
+#     the set_color wrapper handles the number->name translation.
 #   - Orange has no palette slot, so p_orange/p_orange2 fold into the yellow
 #     slots (3/11): same urgency family, and they follow the theme like
 #     everything else instead of stranding truecolor ink on theme toggles.
+#   - Force a mode for testing/SSH: ALDO_THEME=light|dark.
 
 function _aldo_terminal_bg
     # Ask the terminal for its actual background color (OSC 11 query).
@@ -107,7 +110,7 @@ function _aldo_dracula_apply_palette
     # (OSC 11, the ground truth) > macOS appearance.
     #
     # Mode only matters for the fzf/pager chrome hexes (p_bg/p_panel/
-    # p_element): the text roles below are slot numbers, so they follow the
+    # p_element): the text roles are slot numbers, so they follow the
     # ghostty theme automatically on every repaint.
     set -l _mode
     if set -q argv[1]; and test -n "$argv[1]"
@@ -133,11 +136,9 @@ function _aldo_dracula_apply_palette
     end
 
     # ── Text roles: ANSI palette slots (see SLOT MAP above) ──
-    # Slot numbers re-resolve through the active ghostty theme palette on
-    # every repaint, so existing sessions heal instantly on a macOS theme
-    # toggle. p_fg = default foreground; gum renders it as default fg too
-    # (termenv ignores values it can't parse, which is the desired no-op).
-    set -g p_fg        normal
+    # p_fg = slot 7: both themes map white/7 to the foreground ink
+    # (#f8f8f2 dark, #282a36 light), so "white" text tracks the theme.
+    set -g p_fg        7
     set -g p_muted     8    # brblack — comment blue-grey #6272a4
 
     set -g p_purple    4    # blue slot — dracula purple
@@ -158,35 +159,38 @@ function _aldo_dracula_apply_palette
     set -g p_yellow2   11   # bryellow
 
     # ── Fish syntax highlighting + pager ─────────────────────
-    # Kept in the palette so typed commands, autosuggestions, and completion
-    # UI follow the terminal theme like everything else. Same role→slot
-    # mapping in both modes.
+    # Literal names (fish's own parser) so typed commands, autosuggestions,
+    # and completion UI follow the terminal theme like everything else.
+    # Same role→slot mapping in both modes.
     set -g fish_color_normal        normal
-    set -g fish_color_command       $p_fg
-    set -g fish_color_param         $p_cyan
-    set -g fish_color_quote         $p_yellow
-    set -g fish_color_redirection   $p_cyan --bold
-    set -g fish_color_operator      $p_cyan2
-    set -g fish_color_escape        $p_cyan2
-    set -g fish_color_end           $p_green
-    set -g fish_color_comment       $p_muted
-    set -g fish_color_error         $p_red
-    set -g fish_color_status        $p_red
-    set -g fish_color_autosuggestion $p_muted
+    set -g fish_color_command       white
+    set -g fish_color_param         cyan
+    set -g fish_color_quote         yellow
+    set -g fish_color_redirection   cyan --bold
+    set -g fish_color_operator      brcyan
+    set -g fish_color_escape        brcyan
+    set -g fish_color_end           green
+    set -g fish_color_comment       brblack
+    set -g fish_color_error         red
+    set -g fish_color_status        red
+    set -g fish_color_autosuggestion brblack
     set -g fish_color_valid_path    --underline
     set -g fish_color_cancel        -r
     set -g fish_color_history_current --bold
-    set -g fish_color_host          $p_fg
-    set -g fish_color_host_remote   $p_yellow
-    set -g fish_color_user          $p_green2
-    set -g fish_color_cwd           $p_green
-    set -g fish_color_cwd_root      $p_red
-    set -g fish_color_search_match  normal --background=$p_muted
-    set -g fish_color_selection     normal --bold --background=$p_muted
-    set -g fish_pager_color_completion        $p_fg
-    set -g fish_pager_color_description       $p_yellow
-    set -g fish_pager_color_prefix            $p_fg --bold --underline
-    set -g fish_pager_color_progress          $p_element --background=$p_cyan
+    set -g fish_color_host          white
+    set -g fish_color_host_remote   yellow
+    set -g fish_color_user          brgreen
+    set -g fish_color_cwd           green
+    set -g fish_color_cwd_root      red
+    set -g fish_color_search_match  white --background=brblack
+    set -g fish_color_selection     white --bold --background=brblack
+    set -g fish_pager_color_completion        white
+    set -g fish_pager_color_description       yellow
+    set -g fish_pager_color_prefix            white --bold --underline
+    # p_element is mode-dependent ink for colored backgrounds; keep the two
+    # pager entries as hex (transient UI, re-resolved on next shell/function
+    # that re-applies the palette).
+    set -g fish_pager_color_progress          $p_element --background=cyan
     set -g fish_pager_color_selected_background --background=$p_element
 end
 

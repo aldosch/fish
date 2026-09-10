@@ -317,6 +317,18 @@ function dotfiles-health
     # -------------------------------------------------------------------------
     set -l message (__dot_generate_message)
 
+    # merge pull-repos dead-remote notice (background git sync state) so it
+    # shows in the MOTD + `dot status` and survives this function regenerating
+    # notices.json; pull-repos clears the file itself once nothing is dead
+    set -l pr_notice $state_dir/pull-repos-notice.json
+    if test -f "$pr_notice"
+        set -l pr_count (jq -r '.count // 0' "$pr_notice" 2>/dev/null)
+        set -l pr_summary (jq -r '.summary // ""' "$pr_notice" 2>/dev/null)
+        if test "$pr_count" -gt 0 2>/dev/null
+            __dot_add "pull-repos" "dead remote" "$pr_count dead remote(s)" "$pr_summary" 0
+        end
+    end
+
     # -------------------------------------------------------------------------
     # Write notices.json
     # -------------------------------------------------------------------------
