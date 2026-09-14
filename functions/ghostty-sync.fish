@@ -87,15 +87,20 @@ function ghostty-sync --description 'Keep the locally-patched Ghostty current: m
     end
 
     # --- 2. macOS app: xcodebuild with a clean env (mirrors macos/build.nu,
-    # which we don't use because nushell isn't installed) ---
+    # which we don't use because nushell isn't installed).
+    # Signed with the self-signed "aldo-local" codesigning identity (login
+    # keychain) instead of the project default ad-hoc ("-"): ad-hoc cdhashes
+    # change on every rebuild, which invalidates TCC grants (Full Disk Access
+    # etc.) and re-triggers privacy prompts. A stable identity makes grants
+    # persist across rebuilds. ---
     echo "ghostty-sync: building Ghostty.app"
     set -l conf ReleaseLocal
-    if not env -i HOME="$HOME" DEVELOPER_DIR=$xcode PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+    if not env -i HOME="$HOME" DEVELOPER_DIR=$xcode PATH="/usr/bin:/bin:/usr/sbin:/sbin" CODE_SIGN_IDENTITY=aldo-local CODE_SIGN_STYLE=Manual \
         xcodebuild -project $repo/macos/Ghostty.xcodeproj -scheme Ghostty \
         -configuration $conf SYMROOT=$repo/macos/build -quiet build >/dev/null 2>$repo/.xcodebuild.log
         # ReleaseLocal may not exist on older checkouts; fall back to Release
         set conf Release
-        if not env -i HOME="$HOME" DEVELOPER_DIR=$xcode PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        if not env -i HOME="$HOME" DEVELOPER_DIR=$xcode PATH="/usr/bin:/bin:/usr/sbin:/sbin" CODE_SIGN_IDENTITY=aldo-local CODE_SIGN_STYLE=Manual \
             xcodebuild -project $repo/macos/Ghostty.xcodeproj -scheme Ghostty \
             -configuration $conf SYMROOT=$repo/macos/build -quiet build >/dev/null 2>$repo/.xcodebuild.log
             echo "ghostty-sync: xcodebuild failed — see ~/repos/ghostty/.xcodebuild.log (installed app untouched)"
