@@ -1,9 +1,9 @@
 # nixx-drift - package drift detection and remediation
 #
-# Scans 7 surfaces for drift between what's declared in config and what's
-# actually installed (or, for surface 7, between what nix generates and
-# what's on disk). All surfaces are scanned in parallel via the DAG
-# scheduler (__nixx_run_dag), then surfaces with drift are resolved
+# Scans 8 surfaces for drift between what's declared in config and what's
+# actually installed (or, for the generated-files surface, between what nix
+# generates and what's on disk). All surfaces are scanned in parallel via the
+# DAG scheduler (__nixx_run_dag), then surfaces with drift are resolved
 # sequentially with interactive gum prompts.
 #
 # Surfaces (each runs as a parallel scan task):
@@ -13,7 +13,8 @@
 #   4. opencode plugin         <- opencode/pnpm-lock.yaml (node_modules gitignored)
 #   5. model catalog           <- opencode/model-catalog.json (informational staleness)
 #   6. opencode MCP commands   <- opencode/opencode.json (pnpx guard)
-#   7. generated files         <- nix activation scripts (ghostty config diff)
+#   7. opencode tools          <- opencode/tools/*.ts (must load + valid shape)
+#   8. generated files         <- nix activation scripts (ghostty config diff)
 #
 # Called directly as `nixx check` / `nixx d`, or invoked from nixx.fish after
 # a full update. Returns 0 if no drift found, 1 if any unresolved drift remains.
@@ -623,6 +624,43 @@ function nixx-drift
         end
     end
 
+    function __drift_resolve_opencode_tools
+        set -l logfile $argv[1]
+        __drift_section "opencode tools"
+
+        if not test -f "$logfile"
+            gum style --foreground $p_red "  ✗ Scan failed (no log file)"
+            return
+        end
+
+        set -l items
+        for line in (cat $logfile 2>/dev/null)
+            set -l p (string split \t -- $line)
+            switch "$p[1]"
+                case ITEM
+                    set -a items $p
+                case ERROR
+                    gum style --foreground $p_red "  ✗ $p[2]"
+                    return
+            end
+        end
+
+        if test (count $items) -eq 0
+            gum style --foreground $p_muted "    (no details)"
+            return
+        end
+
+        for item in $items
+            # ITEM\t<kind>\t<type>\t<name>\t<extra>
+            set -l p (string split \t -- $item)
+            gum join --horizontal \
+                (gum style --foreground $p_red "  ✗") \
+                (gum style --foreground $p_fg " $p[4]") \
+                (gum style --foreground $p_muted "  $p[5]")
+        end
+        gum style --foreground $p_muted "    fix the tool file in ~/.config/opencode/tools/, or run: octools --live"
+    end
+
     function __drift_resolve_generated
         set -l logfile $argv[1]
         __drift_section "generated files"
@@ -744,10 +782,11 @@ function nixx-drift
     set -a tasks "opencode plugin|opencode-scan|scanning|10|||source $scans_file; and __drift_scan_opencode $cd"
     set -a tasks "model catalog|model-scan|scanning|30|||source $scans_file; and __drift_scan_model_catalog"
     set -a tasks "opencode mcp commands|mcp-scan|scanning|10|||source $scans_file; and __drift_scan_mcp $cd"
+    set -a tasks "opencode tools|octools-scan|scanning|30|||source $scans_file; and __drift_scan_opencode_tools $cd"
     set -a tasks "generated files|generated-scan|scanning|10|||source $scans_file; and __drift_scan_generated $cd $nd"
 
     # Surface names in the same order as tasks (for mapping results back)
-    set -l surface_names "brew" "pnpm globals" "uv tools" "opencode plugin" "model catalog" "opencode mcp commands" "generated files"
+    set -l surface_names "brew" "pnpm globals" "uv tools" "opencode plugin" "model catalog" "opencode mcp commands" "opencode tools" "generated files"
 
     # Run parallel scan via DAG scheduler (live per-surface display)
     set -g __nixx_results
@@ -778,6 +817,8 @@ function nixx-drift
                     __drift_resolve_model_catalog $logfile
                 case "opencode mcp commands"
                     __drift_resolve_mcp $logfile
+                case "opencode tools"
+                    __drift_resolve_opencode_tools $logfile
                 case "generated files"
                     __drift_resolve_generated $logfile
             end

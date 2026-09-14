@@ -362,7 +362,56 @@ function __drift_scan_mcp
 end
 
 # -------------------------------------------------------------------------
-# Surface 7: generated files (activation-script-managed configs)
+# Surface 7: opencode custom tools (exist, import cleanly, valid tool shape)
+# -------------------------------------------------------------------------
+
+function __drift_scan_opencode_tools
+    set -l config_dir $argv[1]
+    set -l tools_dir $config_dir/opencode/tools
+
+    # No custom tools declared: nothing to check (the dir is the canonical list)
+    if not test -d $tools_dir
+        return 0
+    end
+
+    if not type -q bun
+        printf 'ERROR\tbun not found (required to validate tool files)\n'
+        return 2
+    end
+
+    set -l script $config_dir/fish/scripts/octools-check.ts
+    if not test -f $script
+        printf 'ERROR\tfish/scripts/octools-check.ts not found\n'
+        return 2
+    end
+
+    set -l out (bun $script $tools_dir 2>&1)
+    set -l rc $status
+
+    if test $rc -eq 2
+        for line in $out
+            string match -q 'ERROR*' -- $line; and printf '%s\n' (string replace ERROR "" -- $line | string trim)
+        end
+        return 2
+    end
+
+    set -l found_drift 0
+    for line in $out
+        set -l p (string split \t -- $line)
+        if test "$p[1]" = FAIL
+            printf 'ITEM\tbroken\topencode-tool\t%s\t%s\n' $p[2] $p[4]
+            set found_drift 1
+        end
+    end
+
+    if test $found_drift -eq 0
+        return 0
+    end
+    return 1
+end
+
+# -------------------------------------------------------------------------
+# Surface 8: generated files (activation-script-managed configs)
 # -------------------------------------------------------------------------
 
 function __drift_scan_generated
