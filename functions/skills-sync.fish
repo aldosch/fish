@@ -130,6 +130,23 @@ function skills-sync
     end
     set -l n_repos (count $repos)
 
+    # start-of-run trace: proves the function launched even if a later phase
+    # hangs and gets watchdog-killed (empty DAG logfiles hid this before)
+    set -l cache_age_s "no"
+    if test -f "$cache_file"
+        set -l m (stat -f %m "$cache_file" 2>/dev/null)
+        if test -n "$m"
+            set cache_age_s (math (date +%s) - $m)
+        end
+    end
+    if test "$cache_age_s" = "no"
+        _skills_sync_trace "start, $n_repos repos, no cache file"
+    else if test "$cache_age_s" -gt 7200
+        _skills_sync_trace "start, $n_repos repos, cache age "(math --scale=1 "$cache_age_s / 3600")"h"
+    else
+        _skills_sync_trace "start, $n_repos repos, cache age "$cache_age_s"s"
+    end
+
     # parallel fetch of pushed_at per repo into temp files.
     # curl (not gh api) so each request is bounded by --max-time: gh has no
     # total timeout and a black-holed connection would stall the `wait` until
@@ -137,6 +154,7 @@ function skills-sync
     # end up with no file and are treated as inaccessible (skipped) below.
     set -l tmpdir (mktemp -d /tmp/skills-sync-XXXX)
     set -l gh_token (gh auth token 2>/dev/null)
+    set -l t_pre (date +%s)
     for repo in $repos
         set -l key (string replace -a '/' '__' -- $repo)
         curl -fsSL --max-time 15 \
@@ -171,6 +189,9 @@ function skills-sync
         end
     end
 
+    set -l pre_s (math (date +%s) - $t_pre)
+    _skills_sync_trace "pre-check "$pre_s"s, "(count $changed_repos)" changed, "(count $skipped_repos)" skipped"
+
     rm -rf $tmpdir
 
     # collect skills from changed repos
@@ -203,17 +224,29 @@ function skills-sync
         # Failures self-heal: an unmerged entry's folder hash goes stale, so
         # the next run re-updates that repo.
         set -l upd_tmp (mktemp -d /tmp/skills-sync-upd-XXXX)
+        set -l run_id (date +%s)
+        set -l log_dir "$HOME/Library/Logs/skills-sync/$run_id"
+        set -l t_inst (date +%s)
         set -lx GITHUB_TOKEN (gh auth token 2>/dev/null)
         for repo in $changed_repos
             set -l key (string replace -a '/' '__' -- $repo)
-            fish -c "env XDG_STATE_HOME=$upd_tmp/$key skills add $repo -g -y >$upd_tmp/$key.log 2>&1; echo \$status >$upd_tmp/$key.exit" &
+            fish -c "date +%s >$upd_tmp/$key.start; env XDG_STATE_HOME=$upd_tmp/$key skills add $repo -g -y >$upd_tmp/$key.log 2>&1; echo \$status >$upd_tmp/$key.exit" &
         end
         wait
+        set -l inst_s (math (date +%s) - $t_inst)
+        _skills_sync_trace "installs done in "$inst_s"s ("(count $changed_repos)" repos in parallel)"
 
         set -l failed_repos
         for repo in $changed_repos
             set -l key (string replace -a '/' '__' -- $repo)
             set -l rc (cat "$upd_tmp/$key.exit" 2>/dev/null; or echo 1)
+            set -l r_start (cat "$upd_tmp/$key.start" 2>/dev/null)
+            if test -n "$r_start"
+                set -l r_end (stat -f %m "$upd_tmp/$key.exit" 2>/dev/null; or echo (date +%s))
+                _skills_sync_trace "install $repo rc=$rc after "(__nixx_fmt_time (math "$r_end - $r_start"))
+            else
+                _skills_sync_trace "install $repo rc=$rc (no start timestamp)"
+            end
             set -l tmp_lock "$upd_tmp/$key/skills/.skill-lock.json"
             if test "$rc" = 0; and test -f "$tmp_lock"
                 jq --slurpfile tl "$tmp_lock" '
@@ -237,27 +270,27 @@ function skills-sync
         set -l n_upd_repos (count $changed_repos)
         set -l n_updated (math "$n_upd_repos - $n_failed")
 
+        # keep every per-repo install log (the temp dir goes away below);
+        # tiny files, and the only post-mortem evidence of slow installs
+        mkdir -p "$log_dir"
+        for f in $upd_tmp/*.log
+            test -f "$f"; and mv "$f" "$log_dir/"
+        end
+
         if test $n_failed -eq 0
             gum join --horizontal \
                 (gum style --foreground $p_green "  ✓") \
                 (gum style --foreground $p_fg " $n_updated repo(s) updated in parallel ($n_repos repos checked$skip_note)") \
                 (gum style --foreground $p_muted " ($elapsed)")
         else
-            # persist failed-repo logs (the temp dir goes away below)
-            set -l persist "$HOME/Library/Logs/nixx"
-            mkdir -p $persist
             gum join --horizontal \
                 (gum style --foreground $p_orange "  ▲") \
                 (gum style --foreground $p_fg " $n_updated repo(s) updated, $n_failed failed ($elapsed)") \
                 (gum style --foreground $p_muted " — failed repos self-heal on the next run")
             for repo in $failed_repos
                 set -l key (string replace -a '/' '__' -- $repo)
-                if test -s "$upd_tmp/$key.log"
-                    set -l kept "$persist/skills-sync-$key-(date +%s).log"
-                    mv "$upd_tmp/$key.log" "$kept" 2>/dev/null
-                    if test -s "$kept"
-                        gum style --foreground $p_muted "     log: $kept"
-                    end
+                if test -s "$log_dir/$key.log"
+                    gum style --foreground $p_muted "     log: $log_dir/$key.log"
                 end
             end
         end
@@ -271,6 +304,7 @@ function skills-sync
             (gum style --foreground $p_muted " ($elapsed)")
     end
     # write cache: {repos: {repo: pushed_at}} for all accessible repos
+    set -l t_cache (date +%s)
     if test (count $cache_pairs) -gt 0
         set -l json_objs
         for pair in $cache_pairs
@@ -282,6 +316,12 @@ function skills-sync
     else
         echo '{"repos":{}}' >"$cache_file"
     end
+    _skills_sync_trace "cache write "(math (date +%s) - $t_cache)"s"
 
+    _skills_sync_trace "total "(__nixx_fmt_time (math (date +%s) - $t_start))
     return 0
+end
+
+function _skills_sync_trace
+    echo "trace: "(date '+%H:%M:%S')" $argv" >&2
 end

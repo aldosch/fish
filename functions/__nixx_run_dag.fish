@@ -167,15 +167,18 @@ function __nixx_run_dag
                 set t_exitfile[$i] $exitfile
                 set t_start[$i]    (date +%s)
 
-                fish -c "begin; $t_cmd[$i]; end >$logfile 2>&1; echo \$status >$exitfile" &
+                fish -c "set -l t0 (date +%s); begin; $t_cmd[$i]; end >$logfile 2>&1; set -l rc \$status; set -l now (date +%s); echo exit=\$rc elapsed_s=(math \"\$now - \$t0\") >>$logfile; echo \$rc >$exitfile" &
                 set t_pid[$i] $last_pid
 
-                # watchdog: kill after timeout, write 124 if the child didn't
+                # watchdog: kill after timeout, write 124 if the child didn't.
+                # the timeout marker is appended to the logfile here because a
+                # killed child never reaches its own exit/elapsed echo
                 set -l to $t_timeout[$i]
                 set -l jpid $t_pid[$i]
                 fish -c "
                     sleep $to
                     if test -f $exitfile; exit 0; end
+                    echo exit=timeout elapsed_s=$to >>{$logfile}
                     touch {$logfile}.timedout
                     __nixx_kill_tree $jpid TERM
                     sleep 2

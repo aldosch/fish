@@ -284,7 +284,7 @@ function nixx
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
             set -a tasks "node|node-corepack-enable|Enabling corepack shims|60|node-fnm||corepack enable"
             set -a tasks "node|node-corepack-prepare|Updating pnpm (corepack)|60|node-corepack-enable||corepack prepare pnpm@latest --activate"
-            set -a tasks "node|node-pnpm-globals|Updating pnpm globals|300|node-corepack-prepare||pnpm update -g"
+            set -a tasks "node|node-pnpm-globals|Updating pnpm globals|300|node-corepack-prepare||pnpm update -g </dev/null"
             set -a tasks "uv|uv-tools|Updating uv tools|120|||uv tool upgrade --all"
             set -a tasks "kew|kew-sync|Updating patched kew|600|||kew-sync"
             set -a tasks "ghostty|ghostty-sync|Updating patched ghostty|1800|||ghostty-sync"
