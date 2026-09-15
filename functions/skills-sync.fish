@@ -230,7 +230,12 @@ function skills-sync
         set -lx GITHUB_TOKEN (gh auth token 2>/dev/null)
         for repo in $changed_repos
             set -l key (string replace -a '/' '__' -- $repo)
-            fish -c "date +%s >$upd_tmp/$key.start; env XDG_STATE_HOME=$upd_tmp/$key skills add $repo -g -y >$upd_tmp/$key.log 2>&1; echo \$status >$upd_tmp/$key.exit" &
+            # stdin from /dev/null: the skills CLI's clack prompt attaches to
+            # the TTY even with -y, and as a background job of the interactive
+            # nixx session it gets SIGTTIN-suspended (STAT=T) at the prompt.
+            # Maintenance has no TTY, which is why it always worked there.
+            # Same fix as pnpm update -g's approve-builds prompt.
+            fish -c "date +%s >$upd_tmp/$key.start; env XDG_STATE_HOME=$upd_tmp/$key skills add $repo -g -y </dev/null >$upd_tmp/$key.log 2>&1; echo \$status >$upd_tmp/$key.exit" &
         end
         wait
         set -l inst_s (math (date +%s) - $t_inst)

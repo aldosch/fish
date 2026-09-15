@@ -1,7 +1,7 @@
 # video-context: extract transcript + screenshots from a video for LLM context
 #
 # Dependencies:
-#   brew install whisper-cpp ffmpeg   (ffmpeg is also managed via nix/modules/apps.nix)
+#   brew install whisper.cpp ffmpeg   (ffmpeg is also managed via nix/modules/apps.nix)
 #
 # Whisper GGML models (not bundled with whisper-cpp, must be downloaded separately):
 #   Default model dir: ~/.config/whisper-cpp/models/
@@ -75,8 +75,8 @@ function video-context
 
     if not command -q whisper-cli
         echo "error: whisper-cli not found"
-        echo "  install: brew install whisper-cpp"
-        echo "  or add 'whisper-cpp' to commonBrews in nix/modules/apps.nix and run: nixx l"
+        echo "  install: brew install whisper.cpp"
+        echo "  or add 'whisper.cpp' to commonBrews in nix/modules/apps.nix and run: nixx l"
         return 1
     end
 

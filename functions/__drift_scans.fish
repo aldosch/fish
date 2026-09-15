@@ -48,6 +48,13 @@ function __drift_json_names
     printf '%s\n' $json_line | jq -r '.[].name' 2>/dev/null | sort
 end
 
+# Canonicalize a brew package name for comparison: strip the tap prefix, then
+# drop the separators brew itself treats as equivalent (alias tokens like
+# `whisper-cpp` resolve to canonical formula names like `whisper.cpp`).
+function __drift_canon_name
+    string replace -ra '^.+/' '' $argv | string replace -ra '[.\-_]' ''
+end
+
 # -------------------------------------------------------------------------
 # Surface 1: Homebrew brews and casks (via nix eval, 2 evals in parallel)
 # -------------------------------------------------------------------------
@@ -75,6 +82,8 @@ function __drift_scan_brew
     set -l leaves_brews_raw (brew leaves 2>/dev/null)
     set -l all_installed_brews (brew list --formula 2>/dev/null | sort)
     set -l installed_casks (brew list --cask 2>/dev/null | sort)
+    set -l all_installed_brews_canon (__drift_canon_name $all_installed_brews)
+    set -l installed_casks_canon (__drift_canon_name $installed_casks)
 
     # Wait for both nix evals
     wait $brews_pid 2>/dev/null
@@ -106,20 +115,20 @@ function __drift_scan_brew
         return 2
     end
 
-    # Normalize names (strip tap prefixes)
+    # Normalize names (canonical: strip tap prefix + separators)
     set -l declared_brews_normalized
     for pkg in $declared_brews
-        set declared_brews_normalized $declared_brews_normalized (string replace -ra '^.+/' '' $pkg)
+        set declared_brews_normalized $declared_brews_normalized (__drift_canon_name $pkg)
     end
 
     set -l leaves_brews_normalized
     for pkg in $leaves_brews_raw
-        set leaves_brews_normalized $leaves_brews_normalized (string replace -ra '^.+/' '' $pkg)
+        set leaves_brews_normalized $leaves_brews_normalized (__drift_canon_name $pkg)
     end
 
     set -l declared_casks_normalized
     for pkg in $declared_casks
-        set declared_casks_normalized $declared_casks_normalized (string replace -ra '^.+/' '' $pkg)
+        set declared_casks_normalized $declared_casks_normalized (__drift_canon_name $pkg)
     end
 
     set -l found_drift 0
@@ -138,7 +147,7 @@ function __drift_scan_brew
     for i in (seq (count $declared_brews))
         set -l pkg $declared_brews[$i]
         set -l pkg_short $declared_brews_normalized[$i]
-        if not contains -- $pkg_short $all_installed_brews
+        if not contains -- $pkg_short $all_installed_brews_canon
             printf 'ITEM\tmissing\tbrew-formula\t%s\tdeclared in apps.nix but not installed\n' $pkg
             set found_drift 1
         end
@@ -146,7 +155,7 @@ function __drift_scan_brew
 
     # Extra casks
     for pkg in $installed_casks
-        if not contains -- $pkg $declared_casks_normalized
+        if not contains -- (__drift_canon_name $pkg) $declared_casks_normalized
             printf 'ITEM\textra\tbrew-cask\t%s\t\n' $pkg
             set found_drift 1
         end
@@ -156,7 +165,7 @@ function __drift_scan_brew
     for i in (seq (count $declared_casks))
         set -l pkg $declared_casks[$i]
         set -l pkg_short $declared_casks_normalized[$i]
-        if not contains -- $pkg_short $installed_casks
+        if not contains -- $pkg_short $installed_casks_canon
             printf 'ITEM\tmissing\tbrew-cask\t%s\tdeclared in apps.nix but not installed\n' $pkg
             set found_drift 1
         end
