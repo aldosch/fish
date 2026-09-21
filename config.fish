@@ -32,6 +32,7 @@ alias tea="sudo pmset -b disablesleep 0"
 # Utility aliases
 alias cat="bat -pp"
 alias dl3="yt-dlp -x --audio-format mp3 --audio-quality 0 --output '%(channel)s - %(title)s.%(ext)s'"
+alias dlb="yt-dlp -f 'bv*+ba/b' --output '%(channel,uploader)s - %(title)s.%(ext)s'"
 alias oc="opencode"
 alias p3="python3"
 alias pb="pbcopy"
