@@ -178,8 +178,8 @@ function __nixx_run_dag
                 fish -c "
                     sleep $to
                     if test -f $exitfile; exit 0; end
-                    echo exit=timeout elapsed_s=$to >>{$logfile}
-                    touch {$logfile}.timedout
+                    echo exit=timeout elapsed_s=$to >>$logfile
+                    touch $logfile.timedout
                     __nixx_kill_tree $jpid TERM
                     sleep 2
                     __nixx_kill_tree $jpid KILL

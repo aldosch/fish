@@ -22,6 +22,10 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
     # Layer 1 (raw):   raw SQL TSV — mode-independent, invalidated by DB mtime
     # Layer 2 (render): colored TSV ready for fzf — mode-specific, invalidated
     #                   by raw file mtime. Background-refreshed if >30s old.
+    #                   The r2 infix versions the render format: mtime-based
+    #                   invalidation alone would keep serving a cache written
+    #                   by an older ocs-render.awk when the raw cache is
+    #                   current. Bump r2 on any output-format change.
     set -l cache_dir "$HOME/.cache/ocs"
     set -l raw_cache "$cache_dir/sessions.raw.tsv"
     set -l mode (defaults read -g AppleInterfaceStyle 2>/dev/null)
@@ -30,7 +34,7 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
     else
         set mode "light"
     end
-    set -l render_cache "$cache_dir/sessions.$mode.tsv"
+    set -l render_cache "$cache_dir/sessions.r2.$mode.tsv"
 
     mkdir -p "$cache_dir"
 
@@ -101,18 +105,23 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
     set -lx BAT_THEME (test "$mode" = dark; and echo Dracula; or echo "Catppuccin Latte")
 
     # Pipe the rendered cache directly to fzf
+    # No --with-nth: fzf doesn't search fields hidden by --with-nth, so
+    # hiding the transcript column there made ocs match titles only. Instead
+    # the whole line is searched, and ocs-render.awk pushes the content blob
+    # past a 600-space pad — never displayed, since --no-hscroll keeps fzf
+    # from scrolling a match into view and long lines just truncate.
     set -l selected (cat "$render_cache" | \
         fzf \
             --ansi \
             --color="$fzf_colors" \
             --delimiter='\t' \
-            --with-nth=2,3,4 \
+            --no-hscroll \
             --layout=reverse \
             --height=90% \
             --prompt='opencode sessions❯ ' \
             --preview-window='right:60%:wrap' \
-            --preview="sed 's|:sid|{1}|g' $sql_dir/ocs-preview.sql | sqlite3 -batch $db | bat --plain --language=md --color=always" \
-            --bind='ctrl-y:execute-silent(echo -n {1} | pbcopy)' \
+            --preview="sed 's|:sid|{5}|g' $sql_dir/ocs-preview.sql | sqlite3 -batch $db | bat --plain --language=md --color=always" \
+            --bind='ctrl-y:execute-silent(echo -n {5} | pbcopy)' \
             --query="$fzf_query")
 
     if test -z "$selected"
@@ -120,13 +129,13 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
     end
 
     # Strip ANSI codes from the selected line and parse fields
-    # Fields: id(1), title(2), date(3), path(4), content(5)
+    # Fields: title(1), date(2), path(3), content(4), id(5)  (see ocs-render.awk)
     set -l esc (printf '\033')
     set -l clean (string replace -ra "$esc\[[0-9;]*m" '' -- $selected)
     set -l fields (string split \t -- $clean)
-    set -l sid $fields[1]
-    set -l title (string trim -- $fields[2])
-    set -l worktree (string replace -r '^~' "$HOME" -- (string trim -- $fields[4]))
+    set -l sid $fields[5]
+    set -l title (string trim -- $fields[1])
+    set -l worktree (string replace -r '^~' "$HOME" -- (string trim -- $fields[3]))
 
     # Action menu
     set -l action (gum choose \

@@ -2,10 +2,10 @@
 #
 # Usage:
 #   opencode-restore           - pnpm install --frozen-lockfile (reproducible)
-#   opencode-restore --update  - pnpm update then install (advances the caret
-#                                range within @opencode-ai/plugin's ^1.18.0,
-#                                so the plugin tracks the brew-installed CLI
-#                                generation without manual bumps)
+#   opencode-restore --update  - pnpm update then install (refreshes deps;
+#                                @opencode-ai/plugin is exact-pinned, so bump
+#                                package.json by hand to track the CLI
+#                                generation)
 #
 # opencode/tools/research.ts imports @opencode-ai/plugin, which resolves from
 # opencode/node_modules/. That dir is gitignored, so a fresh checkout, a
@@ -58,7 +58,7 @@ function opencode-restore
         (gum style --foreground $p_muted "installing plugin deps from pnpm-lock.yaml")
     echo
 
-    # --- optional update step: advance the caret range within ^1.18.0 ---
+    # --- optional update step: pnpm update, then install (no movement while exact-pinned) ---
     if test $do_update -eq 1
         set -l u_label "Updating @opencode-ai/plugin"
         set -l u_log (mktemp /tmp/opencode-restore-update-XXXXXX)

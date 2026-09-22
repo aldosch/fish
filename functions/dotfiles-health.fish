@@ -6,8 +6,10 @@
 # ~/Library/Logs/dotfiles-health.log.
 #
 # Called by:
-#   - LaunchAgent com.aldo.dotfiles-health (every 4h + RunAtLoad)
+#   - `maintenance` LaunchAgent (daily at 10:00, via scripts/maintenance/maintenance.sh)
 #   - `dot refresh` (interactive, from a terminal)
+#   - lazy background refresh: shells started in ~/.config kick this when
+#     notices.json is older than 4h (conf.d/dotfiles-motd.fish)
 #
 # Auto-fix policy (sudo-free, non-destructive only):
 #   missing pnpm global  -> pnpm add -g        (canonical list is truth)
@@ -334,10 +336,13 @@ function dotfiles-health
     # -------------------------------------------------------------------------
     set -l item_count (count $__dot_items)
 
+    # Write via tmp + mv so concurrent runs (daily maintenance, lazy MOTD
+    # kicks, dot refresh) never leave a torn file for the MOTD's jq to read
     if test $item_count -eq 0
         jq -n \
             --arg generated_at (date -u +%Y-%m-%dT%H:%M:%S) \
-            '{items:[],message:"",count:0,auto_fixed_count:0,generated_at:$generated_at,last_shown:null}' >$notices_file
+            '{items:[],message:"",count:0,auto_fixed_count:0,generated_at:$generated_at,last_shown:null}' >$notices_file.tmp
+        and mv $notices_file.tmp $notices_file
     else
         set -l items_json (printf '%s\n' $__dot_items | jq -s '.')
 
@@ -347,7 +352,8 @@ function dotfiles-health
             --arg generated_at (date -u +%Y-%m-%dT%H:%M:%S) \
             --argjson auto_fixed $__dot_auto_fixed \
             --argjson count $item_count \
-            '{items:$items,message:$message,count:$count,auto_fixed_count:$auto_fixed,generated_at:$generated_at,last_shown:null}' >$notices_file
+            '{items:$items,message:$message,count:$count,auto_fixed_count:$auto_fixed,generated_at:$generated_at,last_shown:null}' >$notices_file.tmp
+        and mv $notices_file.tmp $notices_file
     end
 
     # -------------------------------------------------------------------------

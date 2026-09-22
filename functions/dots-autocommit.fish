@@ -14,10 +14,16 @@
 #   chromium/extensions.json  - chromium-ext-update version pins
 #   docs/pnpm-lock.yaml       - docs dependency updates
 #   pnpm-lock.yaml            - root package.json
+#   git/config                - gh credential-helper path churn
 #
 # TODO.md is committed only when its whole diff consists of added
 # `nixx: ... (auto-logged)` lines (written by nixx's failure auto-log);
 # manual curation edits are never swept up.
+# git/config gets the same treatment: committed only when its whole diff
+# is gh credential-helper path swaps. The helper points at the stable
+# /run/current-system/sw/bin/gh now, so this only fires if `gh auth
+# setup-git` re-embeds a nix store path (or flips between the two forms).
+# Everything else in that file (user, gpg, ...) is never swept up.
 #
 # Safety: pathspec-scoped adds only (never -A/.), skipped during a
 # rebase/merge, and on push failure it rebases onto the remote (aborting on
@@ -94,6 +100,17 @@ function dots-autocommit --description 'Commit + push generated state churn'
         end
         if test $todo_ok -eq 1
             set -a to_commit TODO.md
+        end
+    end
+
+    # --- git/config: only pure gh credential-helper path swaps ---
+    if git -C $repo status --porcelain -- git/config | grep -q .
+        set -l diff (git -C $repo diff HEAD -- git/config)
+        set -l helper_line '^[+-][[:space:]]*helper = !(?:/nix/store/[a-z0-9]+-gh-[0-9.]+|/run/current-system/sw)/bin/(?:\.gh-wrapped|gh) auth git-credential[[:space:]]*$'
+        set -l helper_swaps (string match -r $helper_line -- $diff)
+        set -l changed (string match -r '^[+-][^+-].*' -- $diff)
+        if test (count $helper_swaps) -eq (count $changed); and test (count $changed) -gt 0
+            set -a to_commit git/config
         end
     end
 

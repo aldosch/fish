@@ -18,6 +18,9 @@
 #  -v / --verbose  - sequential execution with full command output (no parallelism).
 #                    Dependency-aware: if a step fails, its dependents are skipped
 #                    and marked blocked instead of running against stale state.
+#  -ss / --skip-skills - omit the agent-skills step from the full update
+#                    (skills-sync still runs via the daily maintenance task
+#                    and manually). No-op on modes that don't touch skills.
 
 
 function nixx
@@ -40,11 +43,15 @@ function nixx
     set -g __nixx_verbose 0
     set -l mode ""
     set -l extra_args
+    set -l skip_skills 0
+    set -l skills_skipped 0
 
     for arg in $argv
         switch $arg
             case -v --verbose
                 set -g __nixx_verbose 1
+            case -ss --skip-skills
+                set skip_skills 1
             case '*'
                 if test -z "$mode"
                     set mode $arg
@@ -278,7 +285,11 @@ function nixx
             set -a tasks "brew|brew-upgrade|Upgrading homebrew packages|600|brew-update|==> Upgrading |opencode-upgrade-check; and brew upgrade"
             set -a tasks "brew|brew-cleanup|Cleaning up homebrew|300|brew-upgrade||brew cleanup"
             set -a tasks "nvim|nvim|Updating neovim plugins|600|||nvim --headless '+Lazy! sync' '+qa!'"
-            set -a tasks "skills|skills|Updating agent skills|600|||skills-sync"
+            if test $skip_skills -eq 0
+                set -a tasks "skills|skills|Updating agent skills|600|||skills-sync"
+            else
+                set skills_skipped 1
+            end
             set -a tasks "chromium|chromium-ext-update|Updating Chromium extensions|120|||chromium-ext-update"
             set -a tasks "claude|claude|Installing/updating claude|60|||curl -fsSL https://claude.ai/install.sh | sh"
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
@@ -392,6 +403,9 @@ function nixx
     set -l detail_parts
     if test "$__nixx_brew_upgraded_count" -gt 0
         set -a detail_parts "$__nixx_brew_upgraded_count packages upgraded"
+    end
+    if test $skills_skipped -eq 1
+        set -a detail_parts "skills skipped"
     end
     if test $fail_count -gt 0
         set -a detail_parts "$fail_count step(s) failed"
