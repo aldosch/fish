@@ -32,8 +32,10 @@ function dotfix
                 (gum style --foreground $p_green "  ✓") \
                 (gum style --foreground $p_fg " all resolved, notices cleared")
         else
-            # Still has drift — run health check to refresh state
-            dotfiles-health
+            # Still has drift — refresh state quietly; the drift detail was
+            # already shown by nixx check above, so skip dotfiles-health's
+            # interactive summary (it would just say "run: dotfix" again)
+            dotfiles-health --quiet
         end
     end
 

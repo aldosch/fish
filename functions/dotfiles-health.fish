@@ -21,9 +21,23 @@
 #   git dirty / unpushed -> notice only
 #
 # The MOTD message is a simple hardcoded string, rotated from a small set.
+#
+# Flags:
+#   -q / --quiet - refresh notices.json + log only, skip the interactive
+#                  summary output (used by `dotfix`, which has already shown
+#                  the drift detail itself and shouldn't end with a
+#                  "run: dotfix" hint pointing at itself)
 
 function dotfiles-health
     _aldo_dracula_apply_palette
+
+    set -l quiet 0
+    for arg in $argv
+        switch $arg
+            case -q --quiet
+                set quiet 1
+        end
+    end
 
     set -l state_dir ~/.local/state/dotfiles
     mkdir -p $state_dir
@@ -363,7 +377,7 @@ function dotfiles-health
     set -l elapsed (math $t_end - $t_start)
     __dot_log "complete: $item_count notices, $__dot_auto_fixed auto-fixed, $elapsed sec"
 
-    if test -t 1
+    if test -t 1; and test $quiet -eq 0
         echo
         if test $item_count -eq 0
             gum join --horizontal \
