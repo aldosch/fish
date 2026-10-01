@@ -15,6 +15,7 @@
 #   docs/pnpm-lock.yaml       - docs dependency updates
 #   pnpm-lock.yaml            - root package.json
 #   git/config                - gh credential-helper path churn
+#   rectangle/*.plist         - rectangle-sync snapshots (per host)
 #
 # TODO.md is committed only when its whole diff consists of added
 # `nixx: ... (auto-logged)` lines (written by nixx's failure auto-log);
@@ -79,7 +80,9 @@ function dots-autocommit --description 'Commit + push generated state churn'
         opencode/pnpm-lock.yaml \
         chromium/extensions.json \
         docs/pnpm-lock.yaml \
-        pnpm-lock.yaml
+        pnpm-lock.yaml \
+        rectangle/Rectangle.min.plist \
+        rectangle/Rectangle.book.plist
 
     set -l to_commit (git -C $repo status --porcelain -- $allowlist | string sub --start 4 | string trim)
 

@@ -464,3 +464,45 @@ function __drift_scan_generated
 
     return 1
 end
+
+# -------------------------------------------------------------------------
+# Surface 9: Rectangle settings (live defaults vs dotfiles snapshot)
+# -------------------------------------------------------------------------
+
+function __drift_scan_rectangle
+    set -l config_dir $argv[1]
+
+    # rectangle-sync.fish defines __rect_diff_keys; source it (status dirname
+    # resolves to fish/functions, where both files live).
+    source (status dirname)/rectangle-sync.fish
+
+    if not defaults read com.knollsoft.Rectangle >/dev/null 2>&1
+        return 0
+    end
+
+    set -l snapshot $config_dir/rectangle/Rectangle.$hostname.plist
+    if not test -f "$snapshot"
+        printf 'ITEM\tmissing\trectangle\tRectangle settings\t%s not found (create with rectangle-sync)\n' $snapshot
+        return 1
+    end
+
+    set -l changes
+    set -l out (__rect_diff_keys $snapshot)
+    if test $status -eq 2
+        printf 'ERROR\tfailed to compare Rectangle settings\n'
+        return 2
+    end
+    set changes $out
+
+    if test (count $changes) -eq 0
+        return 0
+    end
+
+    printf 'ITEM\tmodified\trectangle\tRectangle settings\t%s key(s) differ from snapshot\n' (count $changes)
+    printf 'META\tsource=%s\n' $snapshot
+    for line in $changes
+        printf 'DIFF\t%s\n' $line
+    end
+
+    return 1
+end

@@ -1,8 +1,9 @@
 # nixx-drift - package drift detection and remediation
 #
-# Scans 8 surfaces for drift between what's declared in config and what's
-# actually installed (or, for the generated-files surface, between what nix
-# generates and what's on disk). All surfaces are scanned in parallel via the
+# Scans 9 surfaces for drift between what's declared in config and what's
+# actually installed (or, for the generated-files and rectangle-settings
+# surfaces, between what's on disk / live defaults and the tracked snapshot).
+# All surfaces are scanned in parallel via the
 # DAG scheduler (__nixx_run_dag), then surfaces with drift are resolved
 # sequentially with interactive gum prompts.
 #
@@ -15,6 +16,7 @@
 #   6. opencode MCP commands   <- opencode/opencode.json (pnpx guard)
 #   7. opencode tools          <- opencode/tools/*.ts (must load + valid shape)
 #   8. generated files         <- nix activation scripts (ghostty config diff)
+#   9. rectangle settings      <- rectangle/Rectangle.$hostname.plist (live defaults vs snapshot)
 #
 # Called directly as `nixx check` / `nixx d`, or invoked from nixx.fish after
 # a full update. Returns 0 if no drift found, 1 if any unresolved drift remains.
@@ -762,6 +764,33 @@ function nixx-drift
         end
     end
 
+    # Rectangle settings: the scan already did the per-key diff; delegate the
+    # interactive Back up / Discard / Dismiss choice to rectangle-drift
+    # (report-only without a TTY).
+    function __drift_resolve_rectangle
+        set -l logfile $argv[1]
+        __drift_section "rectangle settings"
+
+        if not test -f "$logfile"
+            gum style --foreground $p_red "  ✗ Scan failed (no log file)"
+            return
+        end
+
+        __drift_parse_logfile $logfile
+
+        if test -n "$parse_error"
+            gum style --foreground $p_red "  ✗ $parse_error"
+            return
+        end
+
+        if test (count $parse_items) -eq 0
+            gum style --foreground $p_red "  ✗ Scan failed (no drift data found)"
+            return
+        end
+
+        rectangle-drift
+    end
+
     # -------------------------------------------------------------------------
     # Main flow: parallel scan + sequential resolve
     # -------------------------------------------------------------------------
@@ -784,9 +813,10 @@ function nixx-drift
     set -a tasks "opencode mcp commands|mcp-scan|scanning|10|||source $scans_file; and __drift_scan_mcp $cd"
     set -a tasks "opencode tools|octools-scan|scanning|30|||source $scans_file; and __drift_scan_opencode_tools $cd"
     set -a tasks "generated files|generated-scan|scanning|10|||source $scans_file; and __drift_scan_generated $cd $nd"
+    set -a tasks "rectangle settings|rectangle-scan|scanning|10|||source $scans_file; and __drift_scan_rectangle $cd"
 
     # Surface names in the same order as tasks (for mapping results back)
-    set -l surface_names "brew" "pnpm globals" "uv tools" "opencode plugin" "model catalog" "opencode mcp commands" "opencode tools" "generated files"
+    set -l surface_names "brew" "pnpm globals" "uv tools" "opencode plugin" "model catalog" "opencode mcp commands" "opencode tools" "generated files" "rectangle settings"
 
     # Run parallel scan via DAG scheduler (live per-surface display)
     set -g __nixx_results
@@ -821,6 +851,8 @@ function nixx-drift
                     __drift_resolve_opencode_tools $logfile
                 case "generated files"
                     __drift_resolve_generated $logfile
+                case "rectangle settings"
+                    __drift_resolve_rectangle $logfile
             end
         end
     end
@@ -868,6 +900,7 @@ function nixx-drift
     functions -e __drift_resolve_model_catalog
     functions -e __drift_resolve_mcp
     functions -e __drift_resolve_generated
+    functions -e __drift_resolve_rectangle
 
     if test $any_drift -eq 0
         return 0

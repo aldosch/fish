@@ -245,6 +245,32 @@ function nixx
             set __nixx_sudo_keep_pid $last_pid
     end
 
+    # --- pre-apply: Rectangle settings gate ---
+    # darwin-rebuild rewrites any defaults keys declared in nix on every
+    # apply. Before it runs, compare live Rectangle settings against the
+    # snapshot in rectangle/Rectangle.$hostname.plist and offer to back up
+    # or discard the drift interactively. Abort exits here, before anything
+    # touches the system. Modes without an apply step (b) skip the gate.
+    switch "$mode"
+        case '' a l locked
+            if type -q rectangle-drift
+                rectangle-drift --pre-apply
+                if test $status -ne 0
+                    gum style --foreground $p_orange \
+                        "  ▸ aborted before apply (Rectangle settings drift)"
+                    if test $__nixx_sudo_keep_pid -gt 0
+                        kill $__nixx_sudo_keep_pid 2>/dev/null
+                    end
+                    set -e __nixx_verbose
+                    set -e __nixx_results
+                    set -e __nixx_brew_upgraded_count
+                    set -e __nixx_sudo_keep_pid
+                    functions -e __nixx_step
+                    return 1
+                end
+            end
+    end
+
     # --- pre-expand hostname and extra_args for command strings ---
     set -l hn $hostname
     set -l ea (string join " " $extra_args)
@@ -291,6 +317,10 @@ function nixx
                 set skills_skipped 1
             end
             set -a tasks "chromium|chromium-ext-update|Updating Chromium extensions|120|||chromium-ext-update"
+            # agent-browser: idempotent — no-op once Chrome for Testing (or an
+            # auto-detected existing Chrome) is in place, so this only pays the
+            # download cost on first install / fresh machines.
+            set -a tasks "agent-browser|agent-browser-install|Ensuring agent-browser Chrome|600|nix-apply||agent-browser install"
             set -a tasks "claude|claude|Installing/updating claude|60|||curl -fsSL https://claude.ai/install.sh | sh"
             set -a tasks "node|node-fnm|Installing latest node (fnm)|300|||fnm install --lts && fnm default lts-latest"
             set -a tasks "node|node-corepack-enable|Enabling corepack shims|60|node-fnm||corepack enable"
