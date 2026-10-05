@@ -271,14 +271,16 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
             # fish-side commit of newly-dirty files if the agent skipped it.
             set -l repo ~/.config
             set -l head_before (git -C $repo rev-parse HEAD 2>/dev/null)
-            set -l dirty_before (git -C $repo status --porcelain 2>/dev/null | string cut -c4- | sort)
+            set -l dirty_before (git -C $repo status --porcelain 2>/dev/null | cut -c4- | sort)
 
             set -l apply_prompt "Fix this issue in the dotfiles repo ($repo): $root_cause. The fix: $fix_text. Read AGENTS.md for conventions. Make the edit, update docs if needed, then verify with any relevant lint/build commands. When the edit is done, commit it: stage ONLY the files you modified (git add <specific files>, never git add . or git add -A; the repo may contain unrelated dirty files) and commit with the message 'self-heal: <one line summary>'. Do not push."
 
             set -l apply_stamp (date +%s)
             set -l apply_log $heal_dir/nixx-heal-apply-$apply_stamp.log
             set -l apply_exit $heal_dir/nixx-heal-apply-$apply_stamp.exit
-            set -l apply_timeout 180
+            # apply runs multi-step agent edits (and sometimes long
+            # environmental repairs); 180s killed healthy applies mid-work
+            set -l apply_timeout 600
 
             fish -c "opencode run --agent build --auto \$argv[1] >$apply_log 2>&1; echo \$status >$apply_exit" -- "$apply_prompt" &
             set -l apply_pid $last_pid
@@ -333,7 +335,7 @@ function _nixx_heal --description 'Self-heal an error using opencode in plan mod
                     # no new commit: fall back to committing whatever the
                     # apply step left newly-dirty (pathspec commit, so any
                     # pre-existing staged/dirty files are not swept up)
-                    set -l dirty_after (git -C $repo status --porcelain 2>/dev/null | string cut -c4- | sort)
+                    set -l dirty_after (git -C $repo status --porcelain 2>/dev/null | cut -c4- | sort)
                     set -l new_dirty
                     for f in $dirty_after
                         if not contains -- $f $dirty_before
