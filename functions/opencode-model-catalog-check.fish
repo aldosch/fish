@@ -1,17 +1,13 @@
-# opencode-model-catalog-check - check if the model tables in agent.mdx are stale
+# opencode-model-catalog-check - render pending model-catalog proposals
 #
-# Compares opencode/model-catalog.json (the reference snapshot behind the
-# "powerful" and "efficient" model tables in docs/content/docs/agent.mdx)
-# against the live Vercel AI Gateway catalog. Flags providers that now have a
-# newer tool-use model we haven't reviewed, or a documented pick that's
-# disappeared from the catalog entirely.
+# Offline and instant: reads opencode/model-catalog.json and prints the
+# proposals the background research pipeline has filed (plus a staleness
+# hint). All the network work — fetching the live gateway catalog,
+# triaging new models, researching compelling ones — happens in the daily
+# maintenance task (scripts/maintenance/model-catalog-sync.sh) so this
+# surface never slows `nixx check` down. Apply proposals with `model-apply`.
 #
-# Read-only: only calls GET /v1/models (free). Never edits files — findings
-# are informational, since deciding whether a newer model is actually better
-# (see: Claude Fable 5 being creative-only, not a coding upgrade) needs a
-# human or an agent to look, not a mechanical swap.
-#
-# Called automatically as surface 6 of `nixx check` / `nixx d`. Safe to run
+# Called automatically as surface 5 of `nixx check` / `nixx d`. Safe to run
 # standalone any time.
 
 function opencode-model-catalog-check

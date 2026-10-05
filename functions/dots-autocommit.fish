@@ -16,6 +16,8 @@
 #   pnpm-lock.yaml            - root package.json
 #   git/config                - gh credential-helper path churn
 #   rectangle/*.plist         - rectangle-sync snapshots (per host)
+#   opencode/model-catalog.json - model-catalog-sync auto-acks + research
+#                                 proposals (daily maintenance)
 #
 # TODO.md is committed only when its whole diff consists of added
 # `nixx: ... (auto-logged)` lines (written by nixx's failure auto-log);
@@ -78,6 +80,7 @@ function dots-autocommit --description 'Commit + push generated state churn'
         nvim/lazy-lock.json \
         agents/.skill-lock.json \
         opencode/pnpm-lock.yaml \
+        opencode/model-catalog.json \
         chromium/extensions.json \
         docs/pnpm-lock.yaml \
         pnpm-lock.yaml \

@@ -305,7 +305,8 @@ function __drift_scan_opencode
 end
 
 # -------------------------------------------------------------------------
-# Surface 5: model catalog freshness (informational, no install/remove)
+# Surface 5: model catalog (offline render of pending proposals; detection,
+# triage, and research live in the daily maintenance model-catalog-sync)
 # -------------------------------------------------------------------------
 
 function __drift_scan_model_catalog

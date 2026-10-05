@@ -12,7 +12,7 @@
 #   2. pnpm globals            <- pnpm/globals.txt
 #   3. uv tools                <- uv/tools.txt
 #   4. opencode plugin         <- opencode/pnpm-lock.yaml (node_modules gitignored)
-#   5. model catalog           <- opencode/model-catalog.json (informational staleness)
+#   5. model catalog           <- opencode/model-catalog.json (pending proposals, offline)
 #   6. opencode MCP commands   <- opencode/opencode.json (pnpx guard)
 #   7. opencode tools          <- opencode/tools/*.ts (must load + valid shape)
 #   8. generated files         <- nix activation scripts (ghostty config diff)
