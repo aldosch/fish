@@ -21,6 +21,11 @@
 #  -ss / --skip-skills - omit the agent-skills step from the full update
 #                    (skills-sync still runs via the daily maintenance task
 #                    and manually). No-op on modes that don't touch skills.
+#  --heal          - opt in to self-heal: on failure, opencode (plan agent)
+#                    diagnoses + fixes + commits. Default is off: failures
+#                    are auto-logged to TODO.md and nixx exits without
+#                    stalling. Also inherited by publish-dots' secret-scan
+#                    diagnosis when publish-dots runs inside a healed run.
 
 
 function nixx
@@ -50,6 +55,8 @@ function nixx
         switch $arg
             case -v --verbose
                 set -g __nixx_verbose 1
+            case --heal
+                set -g __nixx_heal_enabled 1
             case -ss --skip-skills
                 set skip_skills 1
             case '*'
@@ -525,6 +532,9 @@ function nixx
     set -e __nixx_results
     set -e __nixx_brew_upgraded_count
     set -e __nixx_sudo_keep_pid
+    # __nixx_heal_enabled is NOT unset here: the self-heal decision points
+    # (publish-dots secret scan, scripts-restore, failed steps) all run
+    # after this block. It's unset at the very end of the function.
     functions -e __nixx_step
 
     # --- publish public dotfiles (any apply-bearing mode) ---
@@ -532,7 +542,8 @@ function nixx
     # Runs after full update, locked build+apply, and apply-only. Skipped for
     # build-only (nixx b): nothing was applied, so there's nothing to sync.
     # The secret scan inside publish-dots remains a hard gate; if it trips,
-    # _nixx_heal fires interactively so a leak is never silently pushed.
+    # the heal diagnosis only fires on opt-in runs (--heal) so a leak is
+    # never silently pushed either way.
     switch "$mode"
         case '' a l locked
             if type -q publish-dots
@@ -555,31 +566,43 @@ function nixx
                 scripts-restore 2>$sr_stderr
                 if test -s $sr_stderr
                     and grep -q '\.fish.*(line [0-9]\+):' $sr_stderr 2>/dev/null
-                    _nixx_heal "scripts-restore error" \
-                        (cat $sr_stderr | string collect) \
-                        ~/.config/fish/functions/scripts-restore.fish
+                    if set -q __nixx_heal_enabled
+                        _nixx_heal "scripts-restore error" \
+                            (cat $sr_stderr | string collect) \
+                            ~/.config/fish/functions/scripts-restore.fish
+                    else
+                        gum style --foreground $p_muted "  ⚡ self-heal disabled — rerun with --heal to diagnose"
+                    end
                 end
                 rm -f $sr_stderr
             end
 
             # --- self-heal failed steps ---
-            # After all sub-commands finish, offer to heal any steps that
-            # failed during the update. Uses the captured logfiles.
+            # Opt in with --heal: after all sub-commands finish, offer to
+            # heal any steps that failed during the update. Uses the
+            # captured logfiles. Without --heal, failures were already
+            # auto-logged to TODO.md above — print a hint and move on.
             if test $fail_count -gt 0; and type -q _nixx_heal
-                for entry in $failed_logs
-                    set -l parts (string split ": " $entry)
-                    set -l label $parts[1]
-                    set -l logfile $parts[2]
-                    if test -f "$logfile"
-                        _nixx_heal "$label failure" \
-                            (cat $logfile | string collect) \
-                            ~/.config/fish/functions/nixx.fish
+                if not set -q __nixx_heal_enabled
+                    gum style --foreground $p_muted "  ⚡ self-heal disabled — rerun with --heal to diagnose $fail_count failed step(s)"
+                else
+                    for entry in $failed_logs
+                        set -l parts (string split ": " $entry)
+                        set -l label $parts[1]
+                        set -l logfile $parts[2]
+                        if test -f "$logfile"
+                            _nixx_heal "$label failure" \
+                                (cat $logfile | string collect) \
+                                ~/.config/fish/functions/nixx.fish
+                        end
                     end
                 end
             end
     end
 
     if test $fail_count -gt 0
+        set -e __nixx_heal_enabled
         return 1
     end
+    set -e __nixx_heal_enabled
 end

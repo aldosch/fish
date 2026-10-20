@@ -106,22 +106,18 @@ end
 
 function _aldo_dracula_apply_palette
     # Mode resolution order: explicit argument > ALDO_THEME env var
-    # (exported; useful for SSH and child shells) > terminal background
-    # (OSC 11, the ground truth) > macOS appearance.
-    #
-    # Mode only matters for the fzf/pager chrome hexes (p_bg/p_panel/
-    # p_element): the text roles are slot numbers, so they follow the
-    # ghostty theme automatically on every repaint.
+    # (exported; useful for SSH and child shells) > is-dark, which tiers
+    # terminal background (OSC 11, the ground truth) > effective macOS
+    # appearance (osascript; `defaults` is wrong while Auto is on).
     set -l _mode
     if set -q argv[1]; and test -n "$argv[1]"
         set _mode (string lower -- $argv[1])
     else if set -q ALDO_THEME[1]; and test -n "$ALDO_THEME"
         set _mode (string lower -- $ALDO_THEME)
+    else if is-dark
+        set _mode dark
     else
-        set _mode (_aldo_terminal_bg)
-        if not set -q _mode[1]
-            set _mode (defaults read -g AppleInterfaceStyle 2>/dev/null | string lower)
-        end
+        set _mode light
     end
     if test "$_mode" = dark
         # ── Dark (Dracula) chrome ─────────────────────────────

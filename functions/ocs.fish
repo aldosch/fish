@@ -28,11 +28,9 @@ function ocs --description 'Fuzzy-find opencode sessions globally by transcript 
     #                   current. Bump r2 on any output-format change.
     set -l cache_dir "$HOME/.cache/ocs"
     set -l raw_cache "$cache_dir/sessions.raw.tsv"
-    set -l mode (defaults read -g AppleInterfaceStyle 2>/dev/null)
-    if test "$mode" = Dark
-        set mode "dark"
-    else
-        set mode "light"
+    set -l mode light
+    if is-dark
+        set mode dark
     end
     set -l render_cache "$cache_dir/sessions.r2.$mode.tsv"
 

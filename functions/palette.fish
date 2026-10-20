@@ -32,8 +32,11 @@ end
 
 function __palette_render --argument-names mode_label
     if not set -q mode_label[1]
-        set -l _m (defaults read -g AppleInterfaceStyle 2>/dev/null)
-        set mode_label (test "$_m" = Dark; and echo dark; or echo light)
+        if is-dark
+            set mode_label dark
+        else
+            set mode_label light
+        end
     end
 
     echo
