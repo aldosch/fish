@@ -188,6 +188,18 @@ function _aldo_dracula_apply_palette
     # that re-applies the palette).
     set -g fish_pager_color_progress          $p_element --background=cyan
     set -g fish_pager_color_selected_background --background=$p_element
+
+    # ── fzf UI (Ctrl+R history, ctrl-t, alt-c, gt) ────────────
+    # fzf's built-in scheme assumes a dark terminal: its default selected-row
+    # color (bg+:236) renders near-black in light mode, so the Ctrl+R history
+    # picker showed a dark-mode row on a light background. Same scheme as
+    # ocs.fish, keyed on palette slots so it tracks theme toggles live.
+    # Exported because every fzf invocation reads the env var fresh; widget
+    # opts and per-widget --color (ocs) come after and still win.
+    set -gx FZF_DEFAULT_OPTS (string join '' -- \
+        "--color=bg+:$p_element,fg+:$p_fg,hl:$p_purple,hl+:$p_purple," \
+        "pointer:$p_purple,prompt:$p_cyan,header:$p_muted," \
+        "info:$p_muted,border:$p_element,gutter:$p_bg")
 end
 
 # Apply on shell start

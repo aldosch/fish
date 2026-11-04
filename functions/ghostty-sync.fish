@@ -80,11 +80,18 @@ function ghostty-sync --description 'Keep the locally-patched Ghostty current: m
     end
 
     # --- 1. libghostty: zig builds GhosttyKit.xcframework + resources ---
+    # v1.4.0's xcframework step resolves its source_tree output path
+    # ("macos/GhosttyKit.xcframework") from the *invocation cwd*, not the
+    # build root: running from anywhere else writes the xcframework to
+    # $cwd/macos/ instead of the repo. Always pushd into the repo first.
     echo "ghostty-sync: building libghostty ("$reason")"
+    pushd $repo
     if not env DEVELOPER_DIR=$xcode zig build -Doptimize=ReleaseFast -Demit-xcframework=true --build-file $repo/build.zig >/dev/null 2>$repo/.zig-build.log
+        popd
         echo "ghostty-sync: zig build failed — see ~/repos/ghostty/.zig-build.log (installed app untouched)"
         return 1
     end
+    popd
 
     # --- 2. macOS app: xcodebuild with a clean env (mirrors macos/build.nu,
     # which we don't use because nushell isn't installed) ---

@@ -23,6 +23,9 @@ function scripts-restore
     set -l scripts_dir "$HOME/.config/scripts"
     set -l agents_dir "$HOME/Library/LaunchAgents"
 
+    # ~/Library/LaunchAgents doesn't exist on a fresh macOS install
+    mkdir -p $agents_dir
+
     # --- header ---
     echo
     gum style --bold --foreground $p_purple --border rounded --border-foreground $p_purple \
