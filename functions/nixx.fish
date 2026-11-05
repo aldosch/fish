@@ -310,7 +310,7 @@ function nixx
 
         case '*'
             # Full update: flake, build, apply, brew, nvim, skills, etc.
-            set -a tasks "nix|nix-flake|Updating nix flake|300|||cd ~/.config/nix && nix flake update"
+            set -a tasks "nix|nix-flake|Updating nix flake|300|||__nixx_flake_update"
             set -a tasks "nix|nix-build|Building nix configuration|300|nix-flake||cd ~/.config/nix && nix build '.#darwinConfigurations.$hn.system' --extra-experimental-features 'nix-command flakes' $ea"
             set -a tasks "nix|nix-apply|Applying nix configuration|300|nix-build||cd ~/.config/nix && sudo -E ./result/sw/bin/darwin-rebuild switch --flake '.#$hn'"
             set -a tasks "nix|nix-gc|Collecting nix garbage|300|nix-apply||nix-collect-garbage -d"

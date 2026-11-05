@@ -26,6 +26,14 @@
 # Extensions load unpacked from ~/.config/chromium/<dir>; after an update,
 # restart Chromium (or reload in chrome://extensions) to pick it up.
 #
+# After the update loop, a warn-only registration check reports each
+# extension's load state per Chromium profile: unpacked IDs are
+# sha256(absolute path) and registrations live in MAC-protected Secure
+# Preferences, so a moved home or a profile carried between machines (new
+# Chromium Safe Storage key) silently drops them. The check prints one line
+# per extension; anything loaded nowhere is a prompt to re-load it via
+# chrome://extensions, not a step failure.
+#
 # Not every extension can live here: release entries must ship a browser-ready
 # zip in their GitHub releases (source-only repos like Kagi would need a build
 # step; closed-source extensions stay on the CWS via chromium-web-store).
@@ -87,7 +95,16 @@ function chromium-ext-update
         set -l asset (jq -r ".extensions[$i].asset" $manifest)
         set -l pin (jq -r ".extensions[$i].version" $manifest)
 
-        set -l latest (curl -fsSL https://api.github.com/repos/$repo/releases/latest \
+        # api.github.com rate-limits anonymous calls hard (shared egress IPs
+        # get 403), so authenticate with the gh token when one resolves;
+        # fall back to anonymous otherwise.
+        set -l gh_tok (gh auth token 2>/dev/null)
+        set -l auth_hdr
+        if test -n "$gh_tok"
+            set auth_hdr -H "Authorization: Bearer $gh_tok"
+        end
+
+        set -l latest (curl -fsSL $auth_hdr https://api.github.com/repos/$repo/releases/latest \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])' 2>/dev/null)
 
         if test -z "$latest"
@@ -146,6 +163,42 @@ function chromium-ext-update
         echo "  ✓ $name updated to $latest"
         set updated (math $updated + 1)
     end
+
+    # --- registration check (warn-only, never fails the step) ---
+    # Unpacked extension IDs are sha256(absolute install path), so a moved
+    # home dir resets them; and a profile carried between machines loses its
+    # registrations when the Chromium Safe Storage key changes (Secure
+    # Preferences MACs stop verifying and Chromium wipes the settings).
+    # Surface each extension's load state so a silent deregistration is
+    # noticed on the next nixx/maintenance run instead of in the browser.
+    python3 -c '
+import hashlib, json, glob, os, sys
+m = json.load(open(sys.argv[1]))
+ids = {}
+for e in m.get("extensions", []):
+    p = os.path.expanduser("~/.config/chromium/" + e["dir"])
+    if not os.path.isfile(p + "/manifest.json"):
+        continue
+    i = "".join("abcdefghijklmnop"[int(c, 16)] for c in hashlib.sha256(p.encode()).hexdigest()[:32])
+    ids[i] = (e["name"], p)
+hits = {i: [] for i in ids}
+for sp in glob.glob(os.path.expanduser("~/.config/chromium/profile/*/Secure Preferences")):
+    prof = sp.split("/")[-2]
+    if prof in ("System", "Guest Profile"):
+        continue
+    try:
+        s = json.load(open(sp)).get("extensions", {}).get("settings", {})
+    except Exception:
+        continue
+    for i in ids:
+        if i in s:
+            hits[i].append(prof)
+for i, (name, p) in sorted(ids.items()):
+    if hits[i]:
+        print("  ✓ %s: loaded in %s" % (name, ", ".join(hits[i])))
+    else:
+        print("  ⚠ %s: not loaded in any profile → chrome://extensions → Load unpacked → %s" % (name, p))
+' $manifest
 
     if test $updated -gt 0
         echo "    restart Chromium (or reload in chrome://extensions) to pick up updates"
